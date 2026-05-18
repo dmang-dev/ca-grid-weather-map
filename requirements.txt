@@ -1,0 +1,7 @@
+herbie-data>=2024.8.0
+cfgrib>=0.9.10
+eccodes>=2.37.0
+xarray>=2024.6.0
+numpy>=1.26,<2.3
+requests>=2.31
+shapely>=2.0

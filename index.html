@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description"
+        content="Interactive map overlaying NOAA HRRR 10m wind on California utility outage data, NWS fire/wind alerts, and PSPS event footprints." />
+  <meta name="color-scheme" content="dark" />
+  <title>California wind, outages, PSPS &amp; NWS alerts</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css" />
+  <script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
+
+  <style>
+    html, body, main, #map { height: 100%; margin: 0; padding: 0; background: #0b0e13; }
+    main { display: block; }
+    body { color: #e8eaed; }
+    /* Skip link — invisible until focused. WCAG 2.4.1 (Bypass blocks). */
+    .skip-link {
+      position: absolute; left: 8px; top: -100px; z-index: 2000;
+      background: #fde725; color: #111; padding: 8px 14px; border-radius: 4px;
+      font: 600 14px system-ui, sans-serif; text-decoration: none;
+    }
+    .skip-link:focus { top: 8px; outline: 2px solid #fff; outline-offset: 2px; }
+    /* Visible focus ring — WCAG 2.4.7. Keyboard users only thanks to :focus-visible. */
+    button:focus-visible, a:focus-visible, [tabindex]:focus-visible,
+    .leaflet-control a:focus-visible, .leaflet-control input:focus-visible {
+      outline: 2px solid #fde725 !important;
+      outline-offset: 2px !important;
+      box-shadow: 0 0 0 4px rgba(253,231,37,0.25) !important;
+    }
+    /* Visually-hidden content for screen readers (still announced). */
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+    /* Respect prefers-reduced-motion. Wind layer is opt-in via JS too. */
+    @media (prefers-reduced-motion: reduce) {
+      .leaflet-velocity-control canvas { display: none !important; }
+      * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+    .info-box {
+      position: absolute; z-index: 1000; top: 10px; left: 60px;
+      background: rgba(20, 24, 32, 0.95); color: #e8eaed;
+      padding: 8px 12px; border-radius: 6px; font: 13px/1.45 system-ui, sans-serif;
+      max-width: 360px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    .info-box h1 { margin: 0 0 4px; font-size: 14px; }
+    .info-box .meta { color: #c8ccd1; font-size: 12px; }  /* explicit color > opacity (better contrast) */
+    .info-box code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 3px; }
+    .info-box button {
+      margin-top: 8px; padding: 6px 12px; font: 13px system-ui, sans-serif;
+      background: #2a6cdb; color: #fff; border: 0; border-radius: 4px; cursor: pointer;
+      min-height: 32px;  /* WCAG 2.5.5 target size */
+    }
+    .info-box button:hover:not(:disabled) { background: #3b7ce8; }
+    .info-box button:disabled { background: #5a5a5a; cursor: wait; color: #ddd; }
+    .info-box .status { margin-top: 6px; font-size: 12px; color: #d0d3d8; min-height: 16px; }
+    #hover-panel {
+      position: absolute; z-index: 1000; top: 10px; right: 10px; width: 340px;
+      background: rgba(20, 24, 32, 0.94); color: #e8eaed;
+      padding: 10px 12px; border-radius: 6px;
+      font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,0.55);
+      pointer-events: none;
+    }
+    #hover-panel h2 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #9ad7ff; letter-spacing:.5px; }
+    #hover-panel .coord { font-size: 10px; opacity: 0.65; font-family: ui-monospace, monospace; }
+    #hover-panel .row { display:flex; gap:6px; margin: 4px 0; }
+    #hover-panel .row .k { color: #b3c7d6; min-width: 64px; font-size: 12px; }  /* 4.5:1 contrast on dark bg */
+    #hover-panel .row .v { flex: 1; }
+    #hover-panel .pill {
+      display:inline-block; padding:0 5px; border-radius:3px; font-size:10px;
+      background:#333; color:#ccc; margin-right:3px;
+    }
+    #hover-panel .arrow { display:inline-block; transform-origin:50% 50%; font-size:14px; }
+    #hover-panel .none { color: #9aa0a6; font-style: italic; }  /* lifted from opacity 0.5 -> explicit color */
+
+    /* --- Leaflet controls restyled to match the app's dark panels --- */
+    .leaflet-control-layers,
+    .leaflet-bar {
+      background: rgba(20, 24, 32, 0.95) !important;
+      color: #e8eaed !important;
+      border: 0 !important;
+      border-radius: 6px !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5) !important;
+      font: 13px/1.4 system-ui, sans-serif !important;
+    }
+    .leaflet-control-layers-expanded {
+      padding: 8px 12px !important;
+    }
+    .leaflet-control-layers label {
+      display: flex; align-items: center; gap: 6px;
+      margin: 3px 0;
+      color: #e8eaed;
+      cursor: pointer;
+    }
+    .leaflet-control-layers-selector { accent-color: #9ad7ff; margin: 0 !important; }
+    .leaflet-control-layers-separator { border-top-color: #3a4250 !important; }
+
+    /* Zoom +/- buttons */
+    .leaflet-bar a, .leaflet-bar a:hover {
+      background: transparent !important;
+      color: #e8eaed !important;
+      border-bottom: 1px solid #3a4250 !important;
+      width: 30px; height: 30px; line-height: 30px;
+      font-size: 18px;
+    }
+    .leaflet-bar a:last-child { border-bottom: 0 !important; }
+    .leaflet-bar a:hover { background: rgba(255,255,255,0.06) !important; }
+    .leaflet-bar a.leaflet-disabled { color: #5a6270 !important; cursor: not-allowed; }
+
+    /* Attribution strip in the corner */
+    .leaflet-control-attribution {
+      background: rgba(20, 24, 32, 0.85) !important;
+      color: #b3c7d6 !important;
+      font: 11px system-ui, sans-serif !important;
+      padding: 2px 6px !important;
+    }
+    .leaflet-control-attribution a { color: #9ad7ff !important; }
+
+    /* Popups */
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+      background: rgba(20, 24, 32, 0.97) !important;
+      color: #e8eaed !important;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.55) !important;
+    }
+    .leaflet-popup-content { color: #e8eaed; }
+    .leaflet-popup-content td:first-child { color: #b3c7d6 !important; }
+    .leaflet-popup-close-button { color: #b3c7d6 !important; }
+    .leaflet-popup-close-button:hover { color: #fff !important; }
+    .legend {
+      position: absolute; z-index: 1000; bottom: 24px; left: 10px;
+      background: rgba(20, 24, 32, 0.92); color: #e8eaed;
+      padding: 8px 12px; border-radius: 6px; font: 11px/1.4 system-ui, sans-serif;
+    }
+    .legend .row { display:flex; align-items:center; gap:6px; margin: 2px 0; }
+    .legend .sw { width: 14px; height: 14px; border-radius: 2px; border: 1px solid #fff3; }
+    .leaflet-popup-content { font: 12px/1.4 system-ui, sans-serif; }
+    .leaflet-popup-content table { border-collapse: collapse; }
+    .leaflet-popup-content td { padding: 1px 6px 1px 0; vertical-align: top; }
+    .leaflet-popup-content td:first-child { color: #555; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#map">Skip to map</a>
+
+  <main>
+  <div id="map"
+       role="application"
+       aria-label="Interactive California map showing live HRRR 10m wind, IOU service territories, active power outages, PSPS event footprints, and NWS fire and wind alerts. Use Tab to enter the map, then arrow keys to pan and plus or minus keys to zoom."
+       tabindex="0"></div>
+
+  <aside id="hover-panel" tabindex="0"
+         role="region" aria-label="Information for the location under the cursor (Tab into this panel and screen readers will read the current values)">
+    <h2>At cursor</h2>
+    <div class="coord" id="hp-coord">move mouse over map&hellip;</div>
+    <div class="row"><div class="k">County</div><div class="v" id="hp-county">—</div></div>
+    <div class="row"><div class="k">Utility</div><div class="v" id="hp-utility">—</div></div>
+    <div class="row"><div class="k">Wind</div><div class="v" id="hp-wind">—</div></div>
+    <div class="row"><div class="k">NWS</div><div class="v" id="hp-alerts">—</div></div>
+    <div class="row"><div class="k">Outages</div><div class="v" id="hp-outages">—</div></div>
+    <div class="row"><div class="k">PSPS</div><div class="v" id="hp-psps">—</div></div>
+    <div class="row"><div class="k">Wildfire</div><div class="v" id="hp-fires">—</div></div>
+  </aside>
+
+  <header class="info-box" role="region" aria-label="Map status and data refresh">
+    <h1>CA IOU wind &times; outages &times; PSPS</h1>
+    <div class="meta" id="meta">Loading <code>data/manifest.json</code>&hellip;</div>
+    <button id="refresh-btn" type="button"
+            aria-describedby="refresh-status"
+            aria-label="Refresh all data: HRRR wind, outages, PSPS events, and NWS alerts">
+      &#x21bb; Refresh data
+    </button>
+    <div class="status" id="refresh-status"
+         role="status" aria-live="polite" aria-atomic="true"></div>
+  </header>
+
+  <div class="legend" role="region" aria-label="Map color and symbol legend">
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff5757"></span>Active outage (not planned)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ffd95c"></span>Active outage (planned / PSPS)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#7e5cff;opacity:.55"></span>PSPS event footprint (historical)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff3b3b;opacity:.7"></span>PSPS event footprint (active)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6633;border:2px dashed #ff3300"></span>Active wildfire perimeter</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff5050;border-color:#ff2a2a"></span>NWS Red Flag Warning</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ffae40;border:1.5px dashed #ff8c1a"></span>NWS Fire Weather Watch</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#c060ff;border-color:#a020f0"></span>NWS High Wind Warning</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#60bcff;border-color:#3aa0ff"></span>NWS Wind Advisory</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:linear-gradient(90deg,#3aa,#3a3)"></span>Wind 10m (animated)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #4477AA"></span>PG&amp;E</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #EE7733"></span>SCE</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #228833"></span>SDG&amp;E</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #AA3377"></span>LADWP</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #CCBB44"></span>SMUD</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #EE6677"></span>IID</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #66CCEE"></span>PacifiCorp</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:2px dashed #BB5566"></span>Liberty Utilities</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:transparent;border:1px dashed #BBBBBB"></span>Other POUs</div>
+  </div>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"
+          onerror="document.getElementById('meta').insertAdjacentHTML('beforeend',
+                   '<br/><b style=\'color:#f77\'>leaflet-velocity script failed to load — wind layer disabled.</b>')"></script>
+
+  <script>
+    // Auto-fit California — works at any window aspect ratio without padding tricks.
+    const CA_BOUNDS = L.latLngBounds([[32.4, -124.5], [42.1, -114.0]]);
+    const map = L.map('map', { preferCanvas: true }).fitBounds(CA_BOUNDS, { padding: [12, 12] });
+
+    // Dark basemap (Carto Dark Matter) — keeps wind particles legible.
+    L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; ' +
+          '<a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd', maxZoom: 19,
+      }
+    ).addTo(map);
+
+    const layers = {};
+    const overlays = {};
+
+    // Raw GeoJSON / wind data stashed so the hover panel can do PIP lookups.
+    const HOVER = {
+      wind: null,        // { headerU, headerV, dataU, dataV } once loaded
+      counties: null,    // GeoJSON
+      utilities: null,   // GeoJSON
+      alerts: null,      // GeoJSON
+      outageAreas: null, // GeoJSON — PG&E polygon footprints
+      outagePointsOther: null, // GeoJSON — SCE/SDGE/SMUD point outages
+      psps: null,        // GeoJSON
+      fires: null,       // GeoJSON — active wildfire perimeters
+    };
+
+    // --- helpers ---
+    function fmtDate(ms) {
+      if (ms == null) return '—';
+      return new Date(ms).toLocaleString();
+    }
+    function popupTable(rows) {
+      return '<table>' + rows.map(([k, v]) =>
+        `<tr><td>${k}</td><td>${v ?? '—'}</td></tr>`).join('') + '</table>';
+    }
+
+    // CA counties — fetched only for hover PIP, never drawn.
+    fetch('data/ca_counties.geojson')
+      .then(r => r.json()).then(gj => { HOVER.counties = gj; })
+      .catch(err => console.warn('counties failed:', err));
+
+    // --- 0. CA utility territories (CEC IOU+POU dataset, 53 features) ---
+    // Major utilities get distinct colors; the rest of the POUs render muted.
+    // Paul Tol "bright" palette — 7 CVD-safe qualitative hues, plus one
+    // extra from his "vibrant" set, all distinguishable under deuteranopia,
+    // protanopia, and tritanopia. https://personal.sron.nl/~pault/
+    const MAJOR_UTILITIES = {
+      'PG&E':       '#4477AA',  // blue
+      'SCE':        '#EE7733',  // orange
+      'SDG&E':      '#228833',  // green
+      'LADWP':      '#AA3377',  // purple
+      'SMUD':       '#CCBB44',  // yellow
+      'IID':        '#EE6677',  // light red
+      'PacifiCorp': '#66CCEE',  // cyan
+      'Liberty':    '#BB5566',  // muted dark red (matched by name prefix)
+    };
+    const OTHER_COLOR = '#BBBBBB';
+
+    function utilityColor(props) {
+      const a = (props.Acronym || '').trim();
+      if (MAJOR_UTILITIES[a]) return { color: MAJOR_UTILITIES[a], major: true };
+      const name = props.Utility || '';
+      if (name.startsWith('PacifiCorp')) return { color: MAJOR_UTILITIES['PacifiCorp'], major: true };
+      if (name.startsWith('Liberty'))    return { color: MAJOR_UTILITIES['Liberty'],    major: true };
+      return { color: OTHER_COLOR, major: false };
+    }
+
+    fetch('data/pge_territory.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.utilities = gj;
+        const territory = L.geoJSON(gj, {
+          style: f => {
+            const c = utilityColor(f.properties);
+            return {
+              color: c.color,
+              weight: c.major ? 2 : 1,
+              opacity: c.major ? 0.9 : 0.55,
+              fill: false,
+              dashArray: c.major ? '6 4' : '2 4',
+            };
+          },
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            lyr.bindTooltip(
+              `${p.Utility || p.Acronym || '(unknown)'} (${p.Type || '?'})`
+              + (p.Sales_GWh_2023 ? ` — ${Math.round(p.Sales_GWh_2023).toLocaleString()} GWh/yr` : ''),
+              { sticky: true }
+            );
+          },
+        });
+        territory.addTo(map);
+        territory.bringToBack();
+        overlays[`CA utility territories (${gj.features.length})`] = territory;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('territory layer failed:', err));
+
+    // --- 1. Wind (leaflet-velocity) ---
+    // Honor prefers-reduced-motion (WCAG 2.3.3): users with vestibular
+    // disorders or those who disabled OS animations should not be subjected
+    // to the constant particle motion. We still load the wind DATA (so the
+    // hover panel can report speeds/direction) but skip the animated layer.
+    const prefersReducedMotion =
+      window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    fetch('data/wind.json')
+      .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status))
+      .then(windData => {
+        HOVER.wind = windData;
+        if (prefersReducedMotion) {
+          document.getElementById('meta').insertAdjacentHTML('beforeend',
+            '<br/><i style="color:#c8ccd1">Wind animation disabled (prefers-reduced-motion). Hover panel still reports wind speed/direction at the cursor.</i>');
+          return;
+        }
+        if (typeof L.velocityLayer !== 'function') {
+          throw new Error('L.velocityLayer is not loaded (script blocked or wrong CDN version)');
+        }
+        const wind = L.velocityLayer({
+          displayValues: true,
+          displayOptions: {
+            velocityType: 'Wind',
+            displayPosition: 'bottomright',
+            displayEmptyString: 'No wind data',
+            speedUnit: 'mph',
+          },
+          data: windData,
+          maxVelocity: 25,
+          minVelocity: 0,
+          velocityScale: 0.008,      // slower step -> less "shooting beam" effect
+          particleAge: 50,           // shorter trails -> less spaghetti
+          lineWidth: 1.4,            // thinner streamlines
+          particleMultiplier: 1 / 140,
+          frameRate: 20,
+          // Viridis ramp — perceptually uniform AND colorblind-safe by design.
+          colorScale: [
+            '#440154', '#482878', '#3e4a89', '#31688e', '#26828e',
+            '#1f9e89', '#35b779', '#6dcd59', '#b4de2c', '#fde725',
+          ],
+        });
+        wind.addTo(map);
+        overlays['Wind (HRRR 10m)'] = wind;
+        rebuildLayerControl();
+        console.log('wind layer added: nx=%d ny=%d records=%d',
+          windData[0].header.nx, windData[0].header.ny, windData.length);
+      })
+      .catch(err => {
+        console.warn('wind layer failed:', err);
+        document.getElementById('meta').insertAdjacentHTML('beforeend',
+          `<br/><b style="color:#f77">Wind layer failed: ${err}</b>`);
+      });
+
+    // --- 2. Outages ---
+    function outageStyle(feat) {
+      const planned = (feat.properties.OutageType || '').toLowerCase().includes('planned');
+      return planned
+        ? { color: '#ffd95c', weight: 1, fillOpacity: 0.35 }
+        : { color: '#ff5757', weight: 1, fillOpacity: 0.45 };
+    }
+
+    Promise.all([
+      fetch('data/outage_points.geojson').then(r => r.json()),
+      fetch('data/outage_areas.geojson').then(r => r.json()),
+    ]).then(([points, areas]) => {
+      HOVER.outageAreas = areas;
+      // Only PG&E publishes polygon footprints; SCE/SDGE/SMUD are point-only.
+      // Keep only non-PG&E points so we don't duplicate PG&E polygons.
+      const otherPoints = { type: 'FeatureCollection', features: points.features.filter(f => f.properties.UtilityCompany !== 'PGE') };
+      HOVER.outagePointsOther = otherPoints;
+
+      const otherPointsLayer = L.geoJSON(otherPoints, {
+        pointToLayer: (feat, latlng) => {
+          const p = feat.properties;
+          const planned = (p.OutageType || '').toLowerCase().includes('planned');
+          return L.circleMarker(latlng, {
+            radius: Math.min(3 + Math.log10((p.ImpactedCustomers || 1) + 1) * 3, 14),
+            color: planned ? '#ffd95c' : '#ff5757',
+            weight: 1, fillOpacity: 0.85,
+          });
+        },
+        onEachFeature: (feat, lyr) => {
+          const p = feat.properties;
+          lyr.bindPopup(popupTable([
+            ['Utility', p.UtilityCompany],
+            ['Status', p.OutageStatus],
+            ['Type', p.OutageType],
+            ['Cause', p.Cause],
+            ['Customers', (p.ImpactedCustomers || 0).toLocaleString()],
+            ['County', p.County],
+            ['Started', fmtDate(p.StartDate)],
+            ['Est. restored', fmtDate(p.EstimatedRestoreDate)],
+            ['Incident', p.IncidentId],
+          ]));
+        },
+      });
+
+      const areasLayer = L.geoJSON(areas, {
+        style: outageStyle,
+        onEachFeature: (feat, lyr) => {
+          const p = feat.properties;
+          lyr.bindPopup(popupTable([
+            ['Utility', p.UtilityCompany],
+            ['Status', p.OutageStatus],
+            ['Type', p.OutageType],
+            ['Cause', p.Cause],
+            ['Customers', (p.ImpactedCustomers || 0).toLocaleString()],
+            ['County', p.County],
+            ['Started', fmtDate(p.StartDate)],
+            ['Est. restored', fmtDate(p.EstimatedRestoreDate)],
+          ]));
+        },
+      });
+
+      areasLayer.addTo(map);
+      // Non-PG&E points are the ONLY way to see SCE/SDGE/SMUD outages —
+      // OES doesn't give us polygon footprints for those utilities.
+      otherPointsLayer.addTo(map);
+      overlays[`PG&E outage areas (${areas.features.length})`] = areasLayer;
+      overlays[`SCE/SDGE/SMUD outage points (${otherPoints.features.length})`] = otherPointsLayer;
+      rebuildLayerControl();
+    }).catch(err => console.warn('outage layers failed:', err));
+
+    // --- 2b. NWS active alerts (Red Flag, Fire Weather Watch, Wind Advisory, High Wind) ---
+    const ALERT_STYLES = {
+      'Red Flag Warning':   { color: '#ff2a2a', fillColor: '#ff5050', fillOpacity: 0.25, weight: 2 },
+      'Fire Weather Watch': { color: '#ff8c1a', fillColor: '#ffae40', fillOpacity: 0.20, weight: 1.8, dashArray: '6 4' },
+      'High Wind Warning':  { color: '#a020f0', fillColor: '#c060ff', fillOpacity: 0.22, weight: 1.8 },
+      'High Wind Watch':    { color: '#a020f0', fillColor: '#c060ff', fillOpacity: 0.15, weight: 1.5, dashArray: '6 4' },
+      'Wind Advisory':      { color: '#3aa0ff', fillColor: '#60bcff', fillOpacity: 0.18, weight: 1.5 },
+      'Lake Wind Advisory': { color: '#3aa0ff', fillColor: '#60bcff', fillOpacity: 0.12, weight: 1.2, dashArray: '4 4' },
+      'Extreme Wind Warning': { color: '#ff00aa', fillColor: '#ff66cc', fillOpacity: 0.30, weight: 2.5 },
+    };
+    const ALERT_FALLBACK = { color: '#cccccc', fillColor: '#cccccc', fillOpacity: 0.15, weight: 1 };
+
+    fetch('data/nws_alerts.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.alerts = gj;
+        const layer = L.geoJSON(gj, {
+          style: f => ALERT_STYLES[f.properties.event] || ALERT_FALLBACK,
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            lyr.bindPopup(popupTable([
+              ['Event', `<b>${p.event}</b>`],
+              ['Severity', p.severity],
+              ['Urgency', p.urgency],
+              ['Areas', (p.areaDesc || '').slice(0, 200)],
+              ['Onset', fmtDate(Date.parse(p.onset))],
+              ['Expires', fmtDate(Date.parse(p.expires || p.ends))],
+              ['Office', p.senderName],
+              ['Headline', `<div style="max-width:380px">${p.headline || ''}</div>`],
+            ]) + (p.description
+              ? `<details style="margin-top:6px"><summary>Description</summary>
+                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${p.description}</div></details>`
+              : ''),
+              { maxWidth: 460 });
+          },
+        });
+        layer.addTo(map);
+        const counts = {};
+        gj.features.forEach(f => { counts[f.properties.event] = (counts[f.properties.event] || 0) + 1; });
+        const label = Object.entries(counts).map(([k, v]) => `${k.replace(/ (Warning|Watch|Advisory)/, '')}:${v}`).join(' / ');
+        overlays[`NWS alerts (${gj.features.length}${label ? ' — ' + label : ''})`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('NWS alerts failed:', err));
+
+    // --- 2c. Active wildfire perimeters (NIFC WFIGS) ---
+    fetch('data/wildfires.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.fires = gj;
+        const layer = L.geoJSON(gj, {
+          style: { color: '#ff3300', weight: 2.5, fillColor: '#ff6633',
+                   fillOpacity: 0.45, dashArray: '3 3' },
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed fire';
+            const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
+            const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : 'unknown';
+            lyr.bindPopup(popupTable([
+              ['Fire', `<b>${name}</b>`],
+              ['Size', `${acres} acres`],
+              ['Contained', cont],
+              ['Cause', p.attr_FireCause || '—'],
+              ['Discovered', fmtDate(Date.parse(p.attr_FireDiscoveryDateTime))],
+              ['County', p.attr_POOCounty || '—'],
+              ['Perimeter updated', fmtDate(p.poly_DateCurrent)],
+            ]));
+          },
+        });
+        layer.addTo(map);
+        const totalAcres = gj.features.reduce((s, f) => s + (f.properties.poly_GISAcres || 0), 0);
+        overlays[`Active wildfires (${gj.features.length} — ${Math.round(totalAcres).toLocaleString()} ac)`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('wildfires failed:', err));
+
+    // --- 3. PSPS event footprints ---
+    fetch('data/psps.geojson')
+      .then(r => r.json())
+      .then(psps => {
+        HOVER.psps = psps;
+        const pspsLayer = L.geoJSON(psps, {
+          style: feat => {
+            const active = feat.properties._is_active;
+            return active
+              ? { color: '#ff3b3b', weight: 2, fillColor: '#ff3b3b', fillOpacity: 0.35, dashArray: null }
+              : { color: '#9d7eff', weight: 1.2, fillColor: '#7e5cff', fillOpacity: 0.18, dashArray: '4 4' };
+          },
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            lyr.bindPopup(popupTable([
+              ['Event', p.EventName],
+              ['IOU', p.IOU],
+              ['Status', p._is_active ? '<b style="color:#c33">ACTIVE</b>' : 'Historical'],
+              ['First contact', fmtDate(p.FirstDateofPOC)],
+              ['De-energization start', fmtDate(p.DeEnergizationStartDate)],
+              ['Full restoration', fmtDate(p.FullRestorationDate)],
+              ['De-energized', p.De_Energization],
+              ['Customers de-energized', (p.CustomerDeEnergized || 0).toLocaleString()],
+            ]));
+          },
+        });
+        pspsLayer.addTo(map);
+        const active = psps.features.filter(f => f.properties._is_active).length;
+        overlays[`PSPS events (${psps.features.length} total, ${active} active)`] = pspsLayer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('PSPS layer failed:', err));
+
+    // --- Layer control (rebuilt as layers arrive) ---
+    let layerControl;
+    function rebuildLayerControl() {
+      if (layerControl) layerControl.remove();
+      layerControl = L.control.layers(null, overlays, {
+        collapsed: false,
+        position: 'bottomright',  // top-right is taken by the hover panel
+      }).addTo(map);
+    }
+
+    // --- Manifest banner ---
+    fetch('data/manifest.json').then(r => r.json()).then(m => {
+      const lines = [];
+      lines.push(`<b>Generated:</b> ${new Date(m.generated_at).toLocaleString()}`);
+      if (m.wind?.status === 'ok')
+        lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}`);
+      else lines.push(`<b>Wind:</b> <span style="color:#f77">failed</span>`);
+      if (m.outages?.status === 'ok')
+        lines.push(`<b>Outages:</b> ${m.outages.outage_points} points, ${m.outages.outage_areas} areas (PG&amp;E/SCE/SDG&amp;E/SMUD)`);
+      else lines.push(`<b>Outages:</b> <span style="color:#f77">failed</span>`);
+      if (m.psps?.status === 'ok')
+        lines.push(`<b>PSPS:</b> ${m.psps.events_total} events (last ${m.psps.lookback_days}d), ${m.psps.events_active} active`);
+      else lines.push(`<b>PSPS:</b> <span style="color:#f77">failed</span>`);
+      if (m.alerts?.status === 'ok') {
+        const by = m.alerts.by_event || {};
+        const parts = Object.entries(by).map(([k, v]) => `${v} ${k}`);
+        lines.push(`<b>NWS alerts:</b> ${m.alerts.alerts_total}${parts.length ? ' — ' + parts.join(', ') : ''}`);
+      } else lines.push(`<b>NWS alerts:</b> <span style="color:#f77">failed</span>`);
+      if (m.fires?.status === 'ok')
+        lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)`);
+      else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
+      document.getElementById('meta').innerHTML = lines.join('<br/>');
+    }).catch(() => {
+      document.getElementById('meta').innerHTML =
+        '<span style="color:#f77">No manifest found. Run <code>python fetch_data.py</code>.</span>';
+    });
+
+    // --- Hover panel: what's at the cursor right now ---
+    const hp = {
+      coord: document.getElementById('hp-coord'),
+      county: document.getElementById('hp-county'),
+      utility: document.getElementById('hp-utility'),
+      wind: document.getElementById('hp-wind'),
+      alerts: document.getElementById('hp-alerts'),
+      outages: document.getElementById('hp-outages'),
+      psps: document.getElementById('hp-psps'),
+      fires: document.getElementById('hp-fires'),
+    };
+    const NONE = '<span class="none">—</span>';
+    const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    const MS_TO_MPH = 2.23694;
+
+    // Sample U,V from the leaflet-velocity wind grid at (lat, lon).
+    // Returns { u, v, speed_mph, dir_from_deg } or null if outside grid.
+    function sampleWind(lat, lon) {
+      if (!HOVER.wind) return null;
+      const u = HOVER.wind[0], v = HOVER.wind[1];
+      const h = u.header;
+      // la1 is the *northern* edge; dy steps south. lo1 is west; dx steps east.
+      const j = Math.round((h.la1 - lat) / h.dy);
+      const i = Math.round((lon - h.lo1) / h.dx);
+      if (i < 0 || i >= h.nx || j < 0 || j >= h.ny) return null;
+      const idx = j * h.nx + i;
+      const U = u.data[idx], V = v.data[idx];
+      if (U === undefined || V === undefined) return null;
+      const speed = Math.sqrt(U*U + V*V);
+      // Meteorological "from" direction: 0=N, 90=E.
+      let dir = (Math.atan2(-U, -V) * 180 / Math.PI + 360) % 360;
+      return { u: U, v: V, speed_mph: speed * MS_TO_MPH, dir_from_deg: dir };
+    }
+
+    // Filter GeoJSON features that contain a given point. Uses turf.
+    function pipFeatures(gj, pt) {
+      if (!gj || !window.turf) return [];
+      const hits = [];
+      for (const f of gj.features) {
+        if (!f.geometry) continue;
+        try { if (turf.booleanPointInPolygon(pt, f)) hits.push(f); }
+        catch (e) { /* skip malformed */ }
+      }
+      return hits;
+    }
+
+    function updateHover(latlng) {
+      hp.coord.textContent = `${latlng.lat.toFixed(3)}, ${latlng.lng.toFixed(3)}`;
+      const pt = turf.point([latlng.lng, latlng.lat]);
+
+      // County
+      const counties = pipFeatures(HOVER.counties, pt);
+      hp.county.innerHTML = counties.length
+        ? counties.map(f => f.properties.NAME).join(', ')
+        : NONE;
+
+      // Utility — prefer acronym (e.g. "PG&E"), full name on hover.
+      const utes = pipFeatures(HOVER.utilities, pt);
+      if (utes.length) {
+        hp.utility.innerHTML = utes.map(f => {
+          const p = f.properties;
+          const acronym = (p.Acronym || '').trim();
+          const display = acronym || p.Utility || '?';
+          const fullTitle = p.Utility ? ` title="${p.Utility.replace(/"/g, '&quot;')}"` : '';
+          const sales = p.Sales_GWh_2023 ? ` <span class="pill">${Math.round(p.Sales_GWh_2023).toLocaleString()} GWh</span>` : '';
+          return `<span${fullTitle}>${display}</span>${sales}`;
+        }).join('<br/>');
+      } else hp.utility.innerHTML = NONE;
+
+      // Wind
+      const w = sampleWind(latlng.lat, latlng.lng);
+      if (w) {
+        const compass = COMPASS[Math.round(w.dir_from_deg / 22.5) % 16];
+        // Arrow points the direction wind is *going* (opposite of "from").
+        const goingDeg = (w.dir_from_deg + 180) % 360;
+        hp.wind.innerHTML =
+          `<b>${w.speed_mph.toFixed(1)} mph</b> ${compass} ` +
+          `<span class="arrow" style="transform:rotate(${goingDeg}deg)" title="wind going ${Math.round(goingDeg)}°">↑</span>` +
+          ` <span class="pill" title="U/V components in m/s">${w.u.toFixed(1)},${w.v.toFixed(1)}</span>`;
+      } else hp.wind.innerHTML = NONE;
+
+      // NWS alerts
+      const alerts = pipFeatures(HOVER.alerts, pt);
+      hp.alerts.innerHTML = alerts.length
+        ? alerts.map(f => `<b>${f.properties.event}</b>`).join('<br/>')
+        : NONE;
+
+      // Outages: PG&E polygon containment + SCE/SDGE/SMUD point snap (within
+      // ~18 px of cursor, zoom-aware via pixel-space distance).
+      const polyHits = pipFeatures(HOVER.outageAreas, pt);
+      let pointHits = [];
+      if (HOVER.outagePointsOther) {
+        const cursorPx = map.latLngToLayerPoint(latlng);
+        const SNAP_PX_SQ = 18 * 18;
+        for (const f of HOVER.outagePointsOther.features) {
+          const [lon, lat] = f.geometry.coordinates;
+          const px = map.latLngToLayerPoint(L.latLng(lat, lon));
+          const dx = px.x - cursorPx.x, dy = px.y - cursorPx.y;
+          if (dx*dx + dy*dy < SNAP_PX_SQ) pointHits.push(f);
+        }
+      }
+      const outs = [...polyHits, ...pointHits];
+      if (outs.length) {
+        const totalCust = outs.reduce((s, f) => s + (f.properties.ImpactedCustomers || 0), 0);
+        const utilities = [...new Set(outs.map(f => f.properties.UtilityCompany))].join('/');
+        const planned = outs.filter(f => (f.properties.OutageType || '').toLowerCase().includes('planned')).length;
+        hp.outages.innerHTML =
+          `<b>${outs.length}</b> outage${outs.length > 1 ? 's' : ''} ` +
+          `<span class="pill">${totalCust.toLocaleString()} cust</span> ` +
+          `<span class="pill">${utilities}</span>` +
+          (planned ? ` <span class="pill">${planned} planned</span>` : '');
+      } else hp.outages.innerHTML = NONE;
+
+      // Wildfires
+      const fires = pipFeatures(HOVER.fires, pt);
+      if (fires.length) {
+        hp.fires.innerHTML = fires.map(f => {
+          const p = f.properties;
+          const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed';
+          const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
+          const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : '?';
+          return `<b>${name}</b> <span class="pill">${acres} ac</span> <span class="pill">${cont} contained</span>`;
+        }).join('<br/>');
+      } else hp.fires.innerHTML = NONE;
+
+      // PSPS
+      const psps = pipFeatures(HOVER.psps, pt);
+      if (psps.length) {
+        hp.psps.innerHTML = psps.map(f => {
+          const p = f.properties;
+          const tag = p._is_active ? '<span class="pill" style="background:#a22">ACTIVE</span>' : '<span class="pill">historical</span>';
+          return `${p.EventName || p.IOU} ${tag}`;
+        }).join('<br/>');
+      } else hp.psps.innerHTML = NONE;
+    }
+
+    // Throttle mousemove with requestAnimationFrame so we don't redo PIP 60x/sec
+    // on dense overlays.
+    let _hoverPending = null;
+    map.on('mousemove', (e) => {
+      if (_hoverPending) return;
+      _hoverPending = requestAnimationFrame(() => {
+        _hoverPending = null;
+        updateHover(e.latlng);
+      });
+    });
+    map.on('mouseout', () => { hp.coord.textContent = 'cursor left map'; });
+
+    // --- Refresh button: POST /refresh, then reload the page ---
+    const btn = document.getElementById('refresh-btn');
+    const statusEl = document.getElementById('refresh-status');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.setAttribute('aria-busy', 'true');
+      const t0 = performance.now();
+      statusEl.textContent = 'Refreshing data. This usually takes about 20 to 30 seconds. Please wait.';
+      // Visual ticker only — skip the live-region churn (don't spam SR users).
+      const tickEl = document.createElement('span');
+      tickEl.setAttribute('aria-hidden', 'true');
+      statusEl.appendChild(document.createElement('br'));
+      statusEl.appendChild(tickEl);
+      const tick = setInterval(() => {
+        const s = ((performance.now() - t0) / 1000).toFixed(0);
+        tickEl.textContent = `(${s}s elapsed)`;
+      }, 500);
+      try {
+        const r = await fetch('/refresh', { method: 'POST' });
+        const body = await r.json().catch(() => ({}));
+        clearInterval(tick);
+        btn.removeAttribute('aria-busy');
+        if (r.ok && body.status === 'ok') {
+          statusEl.textContent = `Refresh complete in ${body.duration_s} seconds. Reloading the page now.`;
+          setTimeout(() => location.reload(), 800);
+        } else if (r.status === 409) {
+          statusEl.textContent = `Refresh busy: ${body.message || 'another refresh is in progress'}.`;
+          btn.disabled = false;
+        } else {
+          const msg = (body.stderr_tail || body.message || `HTTP ${r.status}`).slice(0, 200);
+          statusEl.textContent = `Refresh failed: ${msg}`;
+          btn.disabled = false;
+        }
+      } catch (err) {
+        clearInterval(tick);
+        btn.removeAttribute('aria-busy');
+        statusEl.textContent =
+          `Refresh failed: ${err}. Make sure the page is served via python serve.py.`;
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
