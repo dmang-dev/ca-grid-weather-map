@@ -181,7 +181,8 @@
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ffd95c"></span>Active outage (planned / PSPS)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#7e5cff;opacity:.55"></span>PSPS event footprint (historical)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff3b3b;opacity:.7"></span>PSPS event footprint (active)</div>
-    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6633;border:2px dashed #ff3300"></span>Active wildfire perimeter</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6633;border:2px dashed #ff3300"></span>Active wildfire perimeter (WFIGS)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6600;border:2px solid #ffd700;border-radius:50%"></span>InciWeb incident (origin point)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff5050;border-color:#ff2a2a"></span>NWS Red Flag Warning</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ffae40;border:1.5px dashed #ff8c1a"></span>NWS Fire Weather Watch</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#c060ff;border-color:#a020f0"></span>NWS High Wind Warning</div>
@@ -233,6 +234,7 @@
       outagePointsOther: null, // GeoJSON — SCE/SDGE/SMUD point outages
       psps: null,        // GeoJSON
       fires: null,       // GeoJSON — active wildfire perimeters
+      inciweb: null,     // GeoJSON — InciWeb incident points
     };
 
     // --- helpers ---
@@ -507,6 +509,43 @@
       })
       .catch(err => console.warn('wildfires failed:', err));
 
+    // --- 2d. InciWeb incident points (rich narrative for active incidents) ---
+    fetch('data/inciweb.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.inciweb = gj;
+        const layer = L.geoJSON(gj, {
+          pointToLayer: (feat, latlng) => L.circleMarker(latlng, {
+            radius: 7, color: '#ffd700', weight: 2,
+            fillColor: '#ff6600', fillOpacity: 0.95,
+          }),
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            const link = p.InciwebLink
+              ? `<a href="${p.InciwebLink}" target="_blank" rel="noopener">${p.IncidentName}</a>`
+              : (p.IncidentName || 'Unnamed');
+            const fb = p.FacebookURL && p.FacebookURL !== 'null'
+              ? ` &middot; <a href="${p.FacebookURL}" target="_blank" rel="noopener">FB</a>` : '';
+            const tw = p.TwitterURL && p.TwitterURL !== 'null'
+              ? ` &middot; <a href="${p.TwitterURL}" target="_blank" rel="noopener">X</a>` : '';
+            lyr.bindPopup(popupTable([
+              ['Incident', `<b>${link}</b>${fb}${tw}`],
+              ['Agency', p.Agency || '—'],
+              ['Origin', p.OriginDate || '—'],
+              ['Location', p.Location || '—'],
+            ]) + (p.IncidentOverview
+              ? `<details style="margin-top:6px"><summary>Overview</summary>
+                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${p.IncidentOverview}</div></details>`
+              : ''),
+              { maxWidth: 460 });
+          },
+        });
+        layer.addTo(map);
+        overlays[`InciWeb incidents (${gj.features.length})`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('inciweb failed:', err));
+
     // --- 3. PSPS event footprints ---
     fetch('data/psps.geojson')
       .then(r => r.json())
@@ -571,6 +610,9 @@
       if (m.fires?.status === 'ok')
         lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)`);
       else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
+      if (m.inciweb?.status === 'ok')
+        lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}`);
+      else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
       document.getElementById('meta').innerHTML = lines.join('<br/>');
     }).catch(() => {
       document.getElementById('meta').innerHTML =
@@ -690,16 +732,33 @@
           (planned ? ` <span class="pill">${planned} planned</span>` : '');
       } else hp.outages.innerHTML = NONE;
 
-      // Wildfires
+      // Wildfires — perimeter polygons (WFIGS) + InciWeb origin points snapped within ~22 px
       const fires = pipFeatures(HOVER.fires, pt);
-      if (fires.length) {
-        hp.fires.innerHTML = fires.map(f => {
+      let iwHits = [];
+      if (HOVER.inciweb) {
+        const cursorPx = map.latLngToLayerPoint(latlng);
+        const SNAP_PX_SQ = 22 * 22;
+        for (const f of HOVER.inciweb.features) {
+          if (!f.geometry) continue;
+          const [lon, lat] = f.geometry.coordinates;
+          const px = map.latLngToLayerPoint(L.latLng(lat, lon));
+          const dx = px.x - cursorPx.x, dy = px.y - cursorPx.y;
+          if (dx*dx + dy*dy < SNAP_PX_SQ) iwHits.push(f);
+        }
+      }
+      if (fires.length || iwHits.length) {
+        const parts = fires.map(f => {
           const p = f.properties;
           const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed';
           const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
           const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : '?';
           return `<b>${name}</b> <span class="pill">${acres} ac</span> <span class="pill">${cont} contained</span>`;
-        }).join('<br/>');
+        });
+        for (const f of iwHits) {
+          const p = f.properties;
+          parts.push(`<b>${p.IncidentName}</b> <span class="pill">InciWeb</span>`);
+        }
+        hp.fires.innerHTML = parts.join('<br/>');
       } else hp.fires.innerHTML = NONE;
 
       // PSPS

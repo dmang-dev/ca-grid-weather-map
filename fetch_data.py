@@ -434,6 +434,37 @@ def fetch_fires() -> dict:
 
 
 # =============================================================================
+# 7. InciWeb incidents (origin points + rich narrative metadata)
+# =============================================================================
+# WFIGS gives us fire perimeters; InciWeb gives us per-incident pages with
+# news releases, evacuation orders, photos, etc. They complement each other.
+INCIWEB_URL = ("https://services7.arcgis.com/KrXqMokvukYo0YOo/arcgis/rest/services/"
+               "Wildfire_Aware_Inciweb/FeatureServer/0/query")
+
+
+def fetch_inciweb() -> dict:
+    bbox = PGE_BBOX
+    params = {
+        "where": "1=1",
+        "geometry": f"{bbox['lon_min']},{bbox['lat_min']},{bbox['lon_max']},{bbox['lat_max']}",
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": 4326,
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": ("IncidentName,OriginDate,Location,InciwebLink,Agency,"
+                      "FacebookURL,TwitterURL,IncidentOverview"),
+        "outSR": 4326,
+        "f": "geojson",
+    }
+    r = HTTP.get(INCIWEB_URL, params=params, timeout=30)
+    r.raise_for_status()
+    gj = r.json()
+    if "features" not in gj:
+        raise RuntimeError(f"InciWeb fetch failed: {gj!r}")
+    (DATA_DIR / "inciweb.geojson").write_text(json.dumps(gj))
+    return {"incidents": len(gj["features"])}
+
+
+# =============================================================================
 # 5. CA county polygons (reused from OES, 58 counties)
 # =============================================================================
 COUNTIES_URL = (
@@ -513,12 +544,13 @@ def main() -> int:
         "territory": run_one("territory", fetch_territory),
         "counties": run_one("counties", fetch_counties),
         "fires": run_one("fires", fetch_fires),
+        "inciweb": run_one("inciweb", fetch_inciweb),
     }
     (DATA_DIR / "manifest.json").write_text(json.dumps(results, indent=2))
     print("\nmanifest:")
     print(json.dumps(results, indent=2))
     # Non-zero exit only if EVERYTHING failed.
-    ok = sum(1 for k in ("wind", "outages", "psps", "alerts", "territory", "counties", "fires") if results[k]["status"] == "ok")
+    ok = sum(1 for k in ("wind", "outages", "psps", "alerts", "territory", "counties", "fires", "inciweb") if results[k]["status"] == "ok")
     return 0 if ok > 0 else 1
 
 
