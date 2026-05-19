@@ -1,0 +1,18 @@
+{
+  "appId": "dev.dmang.cagridweathermap",
+  "appName": "CA Grid Weather",
+  "webDir": "www",
+  "server": {
+    "url": "https://dmang-dev.github.io/ca-grid-weather-map/",
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "backgroundColor": "#0b0e13"
+  },
+  "ios": {
+    "backgroundColor": "#0b0e13",
+    "contentInset": "automatic"
+  }
+}

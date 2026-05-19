@@ -111,6 +111,24 @@ Electron — uses the OS's own webview:
 If pywebview can't load for some reason, `app.py` falls back to opening
 the URL in your default browser.
 
+## Mobile
+
+The site is a **PWA** — mobile Safari and Chrome both support "Add to Home
+Screen" / "Install app" against the live demo. That's the zero-friction
+mobile install path: no app store, no native build, no signing.
+
+For native shells, the `mobile/` directory has a [Capacitor](https://capacitorjs.com)
+wrapper that points to the GitHub Pages URL. Two CI workflows build it:
+
+| Workflow | Artifact | Use |
+|---|---|---|
+| `build-android.yml` | Unsigned debug APK | Side-load via `adb install`. **Not** Play Store — that needs a signing keystore and a separate release flow. |
+| `build-ios.yml` | Unsigned simulator `.app` | Runs only in the iOS Simulator on a Mac. **Cannot** install on a real iPhone or ship through TestFlight / App Store without an Apple Developer Program account. |
+
+Both download as workflow artifacts from the [Actions tab](https://github.com/dmang-dev/ca-grid-weather-map/actions).
+The iOS job exists primarily as a compile-time regression test until/unless
+real device distribution becomes a goal.
+
 ## File layout
 
 ```

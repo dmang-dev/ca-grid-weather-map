@@ -1,0 +1,83 @@
+name: Build Android APK
+
+# Wraps the existing Leaflet site in a native Android shell via Capacitor.
+# Output: unsigned debug APK. Side-loadable; not Play-Store-ready (which
+# would require keystore secrets, an upload key, and a separate release
+# flow).
+#
+# Capacitor regenerates the android/ project from scratch on each run via
+# `npx cap add android`, so nothing under android/ needs to live in the
+# repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'icon*.svg'
+      - '.github/workflows/build-android.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up JDK 21 (Capacitor 7 requires JDK 17+)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Generate native android/ project
+        run: npx cap add android
+
+      - name: Sync web assets into android/
+        run: npx cap sync android
+
+      - name: Assemble debug APK
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Show APK info
+        run: |
+          ls -lh android/app/build/outputs/apk/debug/
+          file android/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca-grid-weather-android-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30

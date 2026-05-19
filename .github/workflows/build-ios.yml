@@ -1,0 +1,94 @@
+name: Build iOS (unsigned simulator)
+
+# Wraps the existing Leaflet site in a native iOS shell via Capacitor.
+#
+# IMPORTANT — what this produces and what it doesn't:
+#   - Output: an unsigned .app bundle that only runs in the iOS Simulator.
+#   - This artifact CANNOT be installed on a real iPhone.
+#   - This artifact CANNOT be uploaded to App Store / TestFlight.
+#   - Real device installs and App Store distribution require an Apple
+#     Developer Program account ($99/year), a signing identity, and a
+#     provisioning profile — none of which are configured here.
+#
+# Why bother then? This job is a compile-time regression test: it proves
+# the iOS target still builds cleanly after every change to the mobile
+# shell or the web app. The day you (or anyone) gets an Apple Developer
+# account, switching to signed builds is a localized change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'icon*.svg'
+      - '.github/workflows/build-ios.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Generate native ios/ project
+        run: npx cap add ios
+
+      - name: Sync web assets into ios/
+        run: npx cap sync ios
+
+      - name: Build for iOS Simulator (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ./build \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tail -120
+
+      - name: Locate built .app
+        run: |
+          APP_PATH=$(find build -type d -name "App.app" -path "*Debug-iphonesimulator*" | head -1)
+          echo "APP_PATH=$APP_PATH"
+          ls -lh "$APP_PATH" || true
+          du -sh "$APP_PATH" || true
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ca-grid-weather-ios-simulator-app
+          path: mobile/build/Build/Products/Debug-iphonesimulator/App.app
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,11 @@
+# Capacitor regenerates these native projects in CI on every build.
+# We don't commit them: they're huge (~50 MB Android, larger iOS) and
+# every regeneration produces meaningless diffs in machine-generated files.
+android/
+ios/
+node_modules/
+
+# Locks and caches
+package-lock.json
+yarn.lock
+*.log
