@@ -69,14 +69,18 @@ cd ca-grid-weather-map
 
 # 2. Create venv + install (one-time, ~5 minutes — eccodes is the heavy bit)
 python3.11 -m venv .venv
-.venv/Scripts/python -m pip install -r requirements.txt    # Windows
-# source .venv/bin/activate && pip install -r requirements.txt    # macOS/Linux
+
+# Pick the line matching your OS:
+.venv\Scripts\python -m pip install -r requirements.txt   # Windows (PowerShell or cmd)
+source .venv/bin/activate && pip install -r requirements.txt   # macOS / Linux
 
 # 3. Populate ./data with the first dataset fetch (~25 seconds)
-.venv/Scripts/python fetch_data.py
+python fetch_data.py        # works after `activate` on macOS/Linux
+.venv\Scripts\python fetch_data.py   # Windows without activating
 
 # 4. Start the local server (port 8000) — also handles POST /refresh
-.venv/Scripts/python serve.py
+python serve.py
+.venv\Scripts\python serve.py        # Windows alternative
 
 # 5. Open the map
 # http://localhost:8000/
