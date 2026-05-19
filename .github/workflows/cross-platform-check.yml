@@ -97,7 +97,7 @@ jobs:
           # runner sets as CWD) before importing local modules.
           sys.path.insert(0, os.getcwd())
           import webview, app
-          print(f"pywebview {webview.__version__} on {sys.platform}")
+          print(f"webview package imported OK on {sys.platform}; module file: {webview.__file__}")
           for fn in ("ensure_data", "find_free_port", "start_server",
                      "open_window", "main"):
               assert callable(getattr(app, fn)), fn
