@@ -592,7 +592,16 @@
     // --- Manifest banner ---
     fetch('data/manifest.json').then(r => r.json()).then(m => {
       const lines = [];
-      lines.push(`<b>Generated:</b> ${new Date(m.generated_at).toLocaleString()}`);
+      const ageHours = (Date.now() - Date.parse(m.generated_at)) / 3.6e6;
+      const stale = ageHours > 3;
+      const ageStr = ageHours < 1
+        ? `${Math.round(ageHours * 60)} min ago`
+        : `${ageHours.toFixed(1)} hours ago`;
+      if (stale) {
+        lines.push(`<b style="color:#ffb84d">⚠ Stale data:</b> generated ${ageStr} (${new Date(m.generated_at).toLocaleString()})`);
+      } else {
+        lines.push(`<b>Generated:</b> ${new Date(m.generated_at).toLocaleString()} (${ageStr})`);
+      }
       if (m.wind?.status === 'ok')
         lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}`);
       else lines.push(`<b>Wind:</b> <span style="color:#f77">failed</span>`);
@@ -787,7 +796,21 @@
     // --- Refresh button: POST /refresh, then reload the page ---
     const btn = document.getElementById('refresh-btn');
     const statusEl = document.getElementById('refresh-status');
+
+    // Detect static hosting (GitHub Pages, etc.) — refresh requires serve.py.
+    const isStaticDemo = /\.github\.io$/.test(location.hostname);
+    if (isStaticDemo) {
+      btn.textContent = 'Demo (refresh disabled)';
+      btn.disabled = true;
+      btn.title = 'GitHub Pages snapshot — clone the repo and run `python serve.py` for live refresh.';
+      statusEl.innerHTML =
+        'Static demo from GitHub Pages. Clone <a style="color:#9ad7ff" ' +
+        'href="https://github.com/dmang-dev/ca-grid-weather-map">the repo</a> ' +
+        'and run <code>python serve.py</code> for live data.';
+    }
+
     btn.addEventListener('click', async () => {
+      if (isStaticDemo) return;
       btn.disabled = true;
       btn.setAttribute('aria-busy', 'true');
       const t0 = performance.now();
@@ -806,6 +829,13 @@
         const body = await r.json().catch(() => ({}));
         clearInterval(tick);
         btn.removeAttribute('aria-busy');
+        if (r.status === 405 || r.status === 501) {
+          // Static file server — refresh endpoint not implemented.
+          clearInterval(tick);
+          statusEl.textContent = 'Refresh not available — this server only serves static files. Use python serve.py instead.';
+          btn.disabled = true;
+          return;
+        }
         if (r.ok && body.status === 'ok') {
           statusEl.textContent = `Refresh complete in ${body.duration_s} seconds. Reloading the page now.`;
           setTimeout(() => location.reload(), 800);

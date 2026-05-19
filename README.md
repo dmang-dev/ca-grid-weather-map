@@ -1,8 +1,14 @@
 # California Grid Weather Map
 
+**Live demo (stale snapshot):** [dmang-dev.github.io/ca-grid-weather-map](https://dmang-dev.github.io/ca-grid-weather-map/)
+
 Interactive map overlaying live NOAA HRRR 10m wind on California utility
 service territories, active power outages, PSPS event footprints, NWS
 fire/wind alerts, and active wildfire perimeters.
+
+> The hosted demo is a frozen snapshot — wind, alerts, and outages reflect
+> whatever was current the last time the snapshot was refreshed. The
+> refresh button is disabled there. Clone and run locally for live data.
 
 Built to answer the question: *what's blowing where, who's in the dark,
 and is anything on fire?*
