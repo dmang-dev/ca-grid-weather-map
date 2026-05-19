@@ -91,7 +91,12 @@ jobs:
       - name: Import-check app.py and pywebview
         shell: python
         run: |
-          import webview, app, sys
+          import os, sys
+          # `shell: python` runs the script from a temp dir, so sys.path[0]
+          # is that temp dir — not the repo. Add the repo root (which the
+          # runner sets as CWD) before importing local modules.
+          sys.path.insert(0, os.getcwd())
+          import webview, app
           print(f"pywebview {webview.__version__} on {sys.platform}")
           for fn in ("ensure_data", "find_free_port", "start_server",
                      "open_window", "main"):
