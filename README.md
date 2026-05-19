@@ -6,9 +6,13 @@ Interactive map overlaying live NOAA HRRR 10m wind on California utility
 service territories, active power outages, PSPS event footprints, NWS
 fire/wind alerts, and active wildfire perimeters.
 
-> The hosted demo is a frozen snapshot — wind, alerts, and outages reflect
-> whatever was current the last time the snapshot was refreshed. The
-> refresh button is disabled there. Clone and run locally for live data.
+> The hosted demo's `data/` is auto-refreshed every 2 hours by a GitHub
+> Actions workflow (`.github/workflows/refresh-data.yml`). It runs
+> `fetch_data.py` on an Ubuntu runner, then commits the diff back to
+> `main` if anything changed — GitHub Pages redeploys automatically.
+> The refresh button in the UI is disabled on github.io; clone and run
+> `python serve.py` for live on-demand refreshes. To run a refresh
+> manually right now, hit "Run workflow" in the Actions tab.
 
 Built to answer the question: *what's blowing where, who's in the dark,
 and is anything on fire?*
