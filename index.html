@@ -2,11 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="description"
         content="Interactive map overlaying NOAA HRRR 10m wind on California utility outage data, NWS fire/wind alerts, and PSPS event footprints." />
   <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0b0e13" />
   <title>California wind, outages, PSPS &amp; NWS alerts</title>
+
+  <!-- PWA / install metadata -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="CA Grid" />
+  <meta name="mobile-web-app-capable" content="yes" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css" />
@@ -792,6 +802,17 @@
       });
     });
     map.on('mouseout', () => { hp.coord.textContent = 'cursor left map'; });
+
+    // --- Service worker registration (PWA / offline shell) ---
+    // Skip when running locally without HTTPS (browsers block SWs there)
+    // or inside a Capacitor native shell (no benefit, hits the same cache).
+    if ('serviceWorker' in navigator
+        && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .catch((err) => console.warn('Service worker registration failed:', err));
+      });
+    }
 
     // --- Refresh button: POST /refresh, then reload the page ---
     const btn = document.getElementById('refresh-btn');

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CA Grid Weather Map icon">
+  <!-- Background: Viridis-inspired gradient matching the wind layer palette -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#440154"/>
+      <stop offset="0.4" stop-color="#31688e"/>
+      <stop offset="0.7" stop-color="#35b779"/>
+      <stop offset="1"   stop-color="#fde725"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="80" fill="url(#bg)"/>
+  <!-- Stylized streamlines suggesting wind flow -->
+  <g stroke="#e8eaed" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.85">
+    <path d="M 60 180 Q 200 100 360 200 T 480 250"/>
+    <path d="M 40 270 Q 180 220 320 290 T 470 340"/>
+    <path d="M 70 360 Q 200 320 340 380 T 470 420"/>
+  </g>
+  <!-- "CA" letterform -->
+  <text x="256" y="305" text-anchor="middle"
+        font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+        font-size="180" font-weight="700"
+        fill="#0b0e13" stroke="#0b0e13" stroke-width="6"
+        paint-order="stroke fill">CA</text>
+</svg>

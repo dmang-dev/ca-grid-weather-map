@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CA Grid Weather Map maskable icon">
+  <!-- Maskable icons need a safe zone inside a 40% radius from center.
+       Background fills the whole canvas; foreground stays in the safe zone. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#440154"/>
+      <stop offset="0.4" stop-color="#31688e"/>
+      <stop offset="0.7" stop-color="#35b779"/>
+      <stop offset="1"   stop-color="#fde725"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(96 96)">  <!-- shifted into the 40% safe zone -->
+    <g stroke="#e8eaed" stroke-width="10" stroke-linecap="round" fill="none" opacity="0.85">
+      <path d="M 30 100 Q 130 60 230 110 T 300 140"/>
+      <path d="M 20 160 Q 120 130 220 170 T 300 200"/>
+      <path d="M 35 220 Q 130 190 240 230 T 310 260"/>
+    </g>
+    <text x="160" y="200" text-anchor="middle"
+          font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+          font-size="120" font-weight="700"
+          fill="#0b0e13" stroke="#0b0e13" stroke-width="4"
+          paint-order="stroke fill">CA</text>
+  </g>
+</svg>

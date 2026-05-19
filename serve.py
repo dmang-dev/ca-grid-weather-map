@@ -25,6 +25,13 @@ PYTHON = sys.executable  # same venv that's running this server
 _refresh_lock = threading.Lock()
 
 
+# Browsers require Content-Type: application/manifest+json for PWA manifests
+# to register correctly. SimpleHTTPRequestHandler doesn't know about this
+# extension by default.
+SimpleHTTPRequestHandler.extensions_map[".webmanifest"] = "application/manifest+json"
+SimpleHTTPRequestHandler.extensions_map[".geojson"] = "application/geo+json"
+
+
 class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/refresh":
