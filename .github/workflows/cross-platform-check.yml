@@ -27,6 +27,12 @@ jobs:
     name: ${{ matrix.os }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    # Force UTF-8 for every Python invocation in the job. Required on Windows
+    # because Herbie's first-import banner contains Unicode box-drawing chars
+    # that crash on the default cp1252 stdout encoding. Harmless on macOS/Linux.
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     strategy:
       fail-fast: false       # show all three platforms even if one breaks
       matrix:
@@ -55,8 +61,6 @@ jobs:
           python -c "import cfgrib, eccodes, xarray, numpy, shapely, herbie; print('cfgrib', cfgrib.__version__); print('eccodes', eccodes.__version__); print('xarray', xarray.__version__); print('numpy', numpy.__version__); print('shapely', shapely.__version__); print('herbie', herbie.__version__)"
 
       - name: Run fetch_data.py
-        env:
-          PYTHONUTF8: "1"
         run: python fetch_data.py
 
       - name: Assert every fetcher succeeded
