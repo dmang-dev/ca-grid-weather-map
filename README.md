@@ -88,6 +88,29 @@ python serve.py
 
 Click the **↻ Refresh data** button at any time to re-pull every layer.
 
+## Desktop app
+
+If you'd rather have a native window than a browser tab:
+
+```bash
+pip install -r requirements-desktop.txt
+python app.py
+```
+
+`app.py` runs the data fetcher once if `data/` is empty, starts the same
+HTTP server on a free port, and opens a native window pointed at it via
+[pywebview](https://pywebview.flowrl.com/). No Chromium bundle, no
+Electron — uses the OS's own webview:
+
+| OS      | Backend           | Install footprint |
+|---------|-------------------|--------------------|
+| Windows | Edge WebView2 (preinstalled on Win 10/11 22H2+) | ~10 MB (pythonnet) |
+| macOS   | System WebKit                                    | ~5 MB              |
+| Linux   | PyQt5 + QtWebEngine (via `pywebview[qt]`)        | ~70 MB             |
+
+If pywebview can't load for some reason, `app.py` falls back to opening
+the URL in your default browser.
+
 ## File layout
 
 ```

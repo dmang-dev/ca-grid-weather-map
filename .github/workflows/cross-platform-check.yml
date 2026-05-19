@@ -10,13 +10,17 @@ on:
     paths:
       - 'fetch_data.py'
       - 'serve.py'
+      - 'app.py'
       - 'requirements.txt'
+      - 'requirements-desktop.txt'
       - '.github/workflows/cross-platform-check.yml'
   pull_request:
     paths:
       - 'fetch_data.py'
       - 'serve.py'
+      - 'app.py'
       - 'requirements.txt'
+      - 'requirements-desktop.txt'
   workflow_dispatch:
 
 permissions:
@@ -76,3 +80,20 @@ jobs:
               print(json.dumps(m, indent=2))
               sys.exit(1)
           print(f"All {len(required)} fetchers ok.")
+
+      # Desktop deps. We don't launch a window on CI — runners have no display
+      # by default — but we verify pywebview and app.py import cleanly. That
+      # catches missing wheels, broken syntax, and platform-specific install
+      # regressions before they hit a user.
+      - name: Install desktop-app deps
+        run: pip install -r requirements-desktop.txt
+
+      - name: Import-check app.py and pywebview
+        shell: python
+        run: |
+          import webview, app, sys
+          print(f"pywebview {webview.__version__} on {sys.platform}")
+          for fn in ("ensure_data", "find_free_port", "start_server",
+                     "open_window", "main"):
+              assert callable(getattr(app, fn)), fn
+          print("app.py exports OK")

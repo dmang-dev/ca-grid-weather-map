@@ -1,0 +1,10 @@
+# Optional dependencies for the native desktop window (`python app.py`).
+# The core data fetcher (fetch_data.py) does not need any of this.
+#
+# Backends per OS:
+#   - Windows: Edge WebView2 (preinstalled on Windows 10/11 22H2+)
+#   - macOS:   system WebKit (always available)
+#   - Linux:   GTK by default; we use the [qt] extra which installs PyQt5 +
+#              PyQtWebEngine via pip wheels, avoiding the system-GTK dance.
+pywebview>=5.0; sys_platform != "linux"
+pywebview[qt]>=5.0; sys_platform == "linux"
