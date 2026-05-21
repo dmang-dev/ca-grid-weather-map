@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-05-21T18:29:22.876305+00:00",
+  "generated_at": "2026-05-21T23:38:18.712710+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 2.5,
-    "run": "2026-05-21T17:00:00",
+    "duration_s": 3.0,
+    "run": "2026-05-21T22:00:00",
     "grid": [
       261,
       301
@@ -17,45 +17,42 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.1,
-    "outage_points": 254,
-    "outage_areas": 134
+    "duration_s": 0.9,
+    "outage_points": 143,
+    "outage_areas": 100
   },
   "psps": {
-    "status": "ok",
-    "duration_s": 8.6,
-    "events_total": 13,
-    "events_active": 1,
-    "lookback_days": 365
+    "status": "error",
+    "error": "HTTPError('504 Server Error: Gateway Timeout for url: https://services2.arcgis.com/VofPZYDe2pLxSP5G/arcgis/rest/services/Consolidated_PSPS_Map20221231_gdb/FeatureServer/0/query?where=IOU+IN+%28%27PGE%27%2C%27SCE%27%2C%27SDGE%27%29+AND+FirstDateofPOC+%3E%3D+TIMESTAMP+%272025-05-21+23%3A38%3A22%27&outFields=%2A&outSR=4326&f=geojson')"
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 5.2,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 6.3,
+    "duration_s": 5.9,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 3.8,
+    "duration_s": 3.6,
     "counties": 58
   },
   "fires": {
     "status": "ok",
-    "duration_s": 0.3,
-    "fires": 7,
-    "total_acres": 26546.0
+    "duration_s": 0.4,
+    "fires": 8,
+    "total_acres": 26759.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.4,
+    "duration_s": 0.3,
     "incidents": 1
   }
 }
