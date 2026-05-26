@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-05-26T19:34:46.877903+00:00",
+  "generated_at": "2026-05-26T23:49:57.030464+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 2.6,
-    "run": "2026-05-26T18:00:00",
+    "duration_s": 2.7,
+    "run": "2026-05-26T22:00:00",
     "grid": [
       261,
       301
@@ -17,42 +17,42 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.5,
-    "outage_points": 293,
-    "outage_areas": 200
+    "duration_s": 1.0,
+    "outage_points": 156,
+    "outage_areas": 114
   },
   "psps": {
     "status": "ok",
-    "duration_s": 8.7,
+    "duration_s": 13.2,
     "events_total": 12,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 1.4,
-    "alerts_total": 17,
+    "duration_s": 1.2,
+    "alerts_total": 16,
     "by_event": {
       "Wind Advisory": 14,
-      "Lake Wind Advisory": 3
+      "Lake Wind Advisory": 2
     },
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 10.3,
+    "duration_s": 6.6,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 4.3,
+    "duration_s": 3.4,
     "counties": 58
   },
   "fires": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 0.4,
     "fires": 9,
     "total_acres": 27769.0
   },
