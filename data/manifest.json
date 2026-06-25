@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-06-25T02:36:46.929605+00:00",
+  "generated_at": "2026-06-25T07:36:39.987927+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 3.3,
-    "run": "2026-06-25T01:00:00",
+    "duration_s": 3.2,
+    "run": "2026-06-25T06:00:00",
     "grid": [
       261,
       301
@@ -17,20 +17,20 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 0.7,
-    "outage_points": 119,
-    "outage_areas": 91
+    "duration_s": 0.6,
+    "outage_points": 71,
+    "outage_areas": 44
   },
   "psps": {
     "status": "ok",
-    "duration_s": 5.2,
+    "duration_s": 4.1,
     "events_total": 10,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 2.0,
+    "duration_s": 1.6,
     "alerts_total": 3,
     "by_event": {
       "Lake Wind Advisory": 3
@@ -39,7 +39,7 @@
   },
   "territory": {
     "status": "ok",
-    "duration_s": 1.1,
+    "duration_s": 1.0,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
@@ -51,13 +51,13 @@
   },
   "fires": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 0.2,
     "fires": 4,
     "total_acres": 12251.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 0.6,
     "incidents": 2
   }
 }
