@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-06-26T02:39:40.125730+00:00",
+  "generated_at": "2026-06-26T07:43:46.078465+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 4.2,
-    "run": "2026-06-26T01:00:00",
+    "duration_s": 4.3,
+    "run": "2026-06-26T06:00:00",
     "grid": [
       261,
       301
@@ -18,36 +18,36 @@
   "outages": {
     "status": "ok",
     "duration_s": 1.1,
-    "outage_points": 110,
-    "outage_areas": 90
+    "outage_points": 117,
+    "outage_areas": 64
   },
   "psps": {
     "status": "ok",
-    "duration_s": 7.8,
+    "duration_s": 8.2,
     "events_total": 12,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 2.7,
-    "alerts_total": 16,
+    "duration_s": 2.1,
+    "alerts_total": 15,
     "by_event": {
-      "Wind Advisory": 12,
-      "Lake Wind Advisory": 4
+      "Lake Wind Advisory": 5,
+      "Wind Advisory": 10
     },
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 6.4,
+    "duration_s": 6.1,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 4.7,
+    "duration_s": 3.9,
     "counties": 58
   },
   "fires": {
@@ -58,7 +58,7 @@
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.6,
+    "duration_s": 0.5,
     "incidents": 2
   }
 }
