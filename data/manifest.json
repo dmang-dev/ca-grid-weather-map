@@ -1,50 +1,61 @@
 {
-  "generated_at": "2026-07-11T14:45:22.219633+00:00",
+  "generated_at": "2026-07-11T16:46:13.161529+00:00",
   "wind": {
-    "status": "error",
-    "error": "RuntimeError('Processing failed: 503 Server Error: Service Unavailable for url: https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.20260711/conus/hrrr.t13z.wrfsfcf00.grib2')"
+    "status": "ok",
+    "duration_s": 4.7,
+    "run": "2026-07-11T15:00:00",
+    "grid": [
+      261,
+      301
+    ],
+    "bbox": {
+      "lat_min": 31.5,
+      "lat_max": 44.5,
+      "lon_min": -128.5,
+      "lon_max": -113.5
+    }
   },
   "outages": {
     "status": "ok",
     "duration_s": 0.7,
-    "outage_points": 63,
-    "outage_areas": 42
+    "outage_points": 134,
+    "outage_areas": 88
   },
   "psps": {
     "status": "ok",
-    "duration_s": 3.8,
+    "duration_s": 3.2,
     "events_total": 11,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 0.5,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 1.0,
+    "duration_s": 1.3,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 2.4,
+    "duration_s": 2.7,
     "counties": 58
   },
   "fires": {
     "status": "ok",
     "duration_s": 0.2,
     "fires": 5,
-    "total_acres": 2939.0
+    "total_acres": 2942.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.4,
+    "duration_s": 0.5,
     "incidents": 0
   }
 }
