@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-07-17T18:56:54.709816+00:00",
+  "generated_at": "2026-07-17T20:44:27.670457+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 3.5,
-    "run": "2026-07-17T17:00:00",
+    "duration_s": 3.7,
+    "run": "2026-07-17T19:00:00",
     "grid": [
       261,
       301
@@ -17,45 +17,45 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.1,
-    "outage_points": 294,
-    "outage_areas": 197
+    "duration_s": 0.6,
+    "outage_points": 229,
+    "outage_areas": 154
   },
   "psps": {
     "status": "ok",
-    "duration_s": 3.7,
+    "duration_s": 4.2,
     "events_total": 11,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 0.8,
+    "duration_s": 0.6,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 12.1,
+    "duration_s": 5.8,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 2.5,
+    "duration_s": 2.3,
     "counties": 58
   },
   "fires": {
     "status": "ok",
-    "duration_s": 0.7,
+    "duration_s": 0.3,
     "fires": 7,
     "total_acres": 19114.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.3,
+    "duration_s": 0.5,
     "incidents": 1
   }
 }
