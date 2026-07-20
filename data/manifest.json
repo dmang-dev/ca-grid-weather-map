@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-07-20T19:28:50.825400+00:00",
+  "generated_at": "2026-07-20T21:03:39.978041+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 4.3,
-    "run": "2026-07-20T18:00:00",
+    "duration_s": 4.0,
+    "run": "2026-07-20T20:00:00",
     "grid": [
       261,
       301
@@ -17,43 +17,45 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.1,
-    "outage_points": 293,
-    "outage_areas": 195
+    "duration_s": 1.6,
+    "outage_points": 223,
+    "outage_areas": 159
   },
   "psps": {
     "status": "ok",
-    "duration_s": 3.9,
+    "duration_s": 4.5,
     "events_total": 10,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 1.0,
+    "duration_s": 1.1,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 1.1,
+    "duration_s": 1.5,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 2.4,
+    "duration_s": 2.6,
     "counties": 58
   },
   "fires": {
-    "status": "error",
-    "error": "RuntimeError(\"Fires fetch failed: {'error': {'code': 429, 'message': 'Unable to perform query. Too many requests.', 'details': ['API calls quota exceeded (59441 request units)! maximum allowed request units (57600) per Minute. Retry after 60 sec.']}}\")"
+    "status": "ok",
+    "duration_s": 0.8,
+    "fires": 8,
+    "total_acres": 18296.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.4,
+    "duration_s": 0.5,
     "incidents": 0
   }
 }
