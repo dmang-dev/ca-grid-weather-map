@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-07-22T17:08:49.169131+00:00",
+  "generated_at": "2026-07-22T19:00:40.812739+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 3.4,
-    "run": "2026-07-22T16:00:00",
+    "duration_s": 2.6,
+    "run": "2026-07-22T18:00:00",
     "grid": [
       261,
       301
@@ -17,16 +17,13 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.1,
-    "outage_points": 371,
-    "outage_areas": 237
+    "duration_s": 1.0,
+    "outage_points": 326,
+    "outage_areas": 218
   },
   "psps": {
-    "status": "ok",
-    "duration_s": 4.1,
-    "events_total": 10,
-    "events_active": 0,
-    "lookback_days": 365
+    "status": "error",
+    "error": "ConnectionError(ReadTimeoutError(\"HTTPSConnectionPool(host='services2.arcgis.com', port=443): Read timed out.\"))"
   },
   "alerts": {
     "status": "ok",
@@ -39,7 +36,7 @@
   },
   "territory": {
     "status": "ok",
-    "duration_s": 9.2,
+    "duration_s": 15.1,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
@@ -51,7 +48,7 @@
   },
   "fires": {
     "status": "error",
-    "error": "RuntimeError(\"Fires fetch failed: {'error': {'code': 429, 'message': 'Unable to perform query. Too many requests.', 'details': ['API calls quota exceeded (60821 request units)! maximum allowed request units (57600) per Minute. Retry after 60 sec.']}}\")"
+    "error": "RuntimeError(\"Fires fetch failed: {'error': {'code': 429, 'message': 'Unable to perform query. Too many requests.', 'details': ['API calls quota exceeded (87123 request units)! maximum allowed request units (57600) per Minute. Retry after 60 sec.']}}\")"
   },
   "inciweb": {
     "status": "ok",
