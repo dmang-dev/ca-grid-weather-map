@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-07-30T01:46:37.759524+00:00",
+  "generated_at": "2026-07-30T04:51:52.475952+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 4.4,
-    "run": "2026-07-30T00:00:00",
+    "duration_s": 2.8,
+    "run": "2026-07-30T03:00:00",
     "grid": [
       261,
       301
@@ -17,9 +17,9 @@
   },
   "outages": {
     "status": "ok",
-    "duration_s": 0.9,
-    "outage_points": 110,
-    "outage_areas": 86
+    "duration_s": 0.7,
+    "outage_points": 82,
+    "outage_areas": 65
   },
   "psps": {
     "status": "ok",
@@ -37,25 +37,25 @@
   },
   "territory": {
     "status": "ok",
-    "duration_s": 7.0,
+    "duration_s": 6.4,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 2.5,
+    "duration_s": 2.2,
     "counties": 58
   },
   "fires": {
     "status": "ok",
-    "duration_s": 0.8,
+    "duration_s": 0.6,
     "fires": 14,
     "total_acres": 103413.0
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.6,
-    "incidents": 11
+    "duration_s": 0.5,
+    "incidents": 10
   }
 }
