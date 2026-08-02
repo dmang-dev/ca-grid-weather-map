@@ -3,7 +3,7 @@
   "appName": "CA Grid Weather",
   "webDir": "www",
   "server": {
-    "url": "https://dmang-dev.github.io/ca-grid-weather-map/",
+    "url": "https://dmang.com/ca-grid-weather-map/",
     "androidScheme": "https",
     "iosScheme": "https",
     "cleartext": false

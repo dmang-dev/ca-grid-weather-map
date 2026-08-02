@@ -1,6 +1,6 @@
 # California Grid Weather Map
 
-**Live demo (stale snapshot):** [dmang-dev.github.io/ca-grid-weather-map](https://dmang-dev.github.io/ca-grid-weather-map/)
+**Live demo (stale snapshot):** [dmang.com/ca-grid-weather-map](https://dmang.com/ca-grid-weather-map/)
 
 Interactive map overlaying live NOAA HRRR 10m wind on California utility
 service territories, active power outages, PSPS event footprints, NWS
@@ -10,8 +10,10 @@ fire/wind alerts, and active wildfire perimeters.
 > Actions workflow (`.github/workflows/refresh-data.yml`). It runs
 > `fetch_data.py` on an Ubuntu runner, then commits the diff back to
 > `main` if anything changed — GitHub Pages redeploys automatically.
-> The refresh button in the UI is disabled on github.io; clone and run
-> `python serve.py` for live on-demand refreshes. To run a refresh
+> The refresh button in the UI is disabled on the hosted demo — it needs
+> `serve.py` behind it, so it only enables when the page is served from
+> localhost, a private-range LAN address, or a `.local` name. Clone and
+> run `python serve.py` for live on-demand refreshes. To run a refresh
 > manually right now, hit "Run workflow" in the Actions tab.
 
 Built to answer the question: *what's blowing where, who's in the dark,
