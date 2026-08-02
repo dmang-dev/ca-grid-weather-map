@@ -67,6 +67,9 @@
     .info-box button:hover:not(:disabled) { background: #3b7ce8; }
     .info-box button:disabled { background: #5a5a5a; cursor: wait; color: #ddd; }
     .info-box .status { margin-top: 6px; font-size: 12px; color: #d0d3d8; min-height: 16px; }
+    /* #9ad7ff on the rgba(20,24,32,.95) panel is ~9.5:1 -- comfortably AA/AAA. */
+    .info-box a { color: #9ad7ff; }
+    .info-box .src { margin-top: 6px; font-size: 12px; color: #c8ccd1; }
     #hover-panel {
       position: absolute; z-index: 1000; top: 10px; right: 10px; width: 340px;
       background: rgba(20, 24, 32, 0.94); color: #e8eaed;
@@ -184,6 +187,12 @@
     </button>
     <div class="status" id="refresh-status"
          role="status" aria-live="polite" aria-atomic="true"></div>
+    <!-- Unconditional. The only repo link used to live inside the static-demo
+         branch below, so it disappeared the moment that check stopped firing. -->
+    <div class="src">Source:
+      <a href="https://github.com/dmang-dev/ca-grid-weather-map"
+         target="_blank" rel="noopener">github.com/dmang-dev/ca-grid-weather-map</a>
+      · <a href="https://dmang.com/">more projects</a></div>
   </header>
 
   <div class="legend" role="region" aria-label="Map color and symbol legend">
@@ -818,16 +827,36 @@
     const btn = document.getElementById('refresh-btn');
     const statusEl = document.getElementById('refresh-status');
 
-    // Detect static hosting (GitHub Pages, etc.) — refresh requires serve.py.
-    const isStaticDemo = /\.github\.io$/.test(location.hostname);
+    // Refresh needs serve.py's POST /refresh; static hosting has no such route.
+    //
+    // This used to test for a ".github.io" hostname, which broke silently when
+    // the site moved to a custom domain: on dmang.com the test returned false,
+    // so the button stayed enabled on a host where the POST can only 405, and
+    // the repo link (which lived in this branch) stopped rendering entirely.
+    //
+    // Enumerating static hosts is the wrong direction — the list grows with
+    // every domain change. Detect the LOCAL case instead, which is a closed
+    // set: loopback, a private-range LAN address, or a .local name. Anything
+    // else is a static snapshot, so a future domain move fails safe.
+    const host = location.hostname;
+    const isLocalServer = location.protocol !== 'file:' && (
+      /^(localhost|\[?::1\]?)$/.test(host) ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /\.local$/.test(host)
+    );
+    const isStaticDemo = !isLocalServer;
     if (isStaticDemo) {
       btn.textContent = 'Demo (refresh disabled)';
       btn.disabled = true;
-      btn.title = 'GitHub Pages snapshot — clone the repo and run `python serve.py` for live refresh.';
+      btn.title = 'Static snapshot — clone the repo and run `python serve.py` for live refresh.';
+      // Host-agnostic wording: this fires on dmang.com too, not just github.io.
+      // The repo link is unconditional in the header now, so don't repeat it.
       statusEl.innerHTML =
-        'Static demo from GitHub Pages. Clone <a style="color:#9ad7ff" ' +
-        'href="https://github.com/dmang-dev/ca-grid-weather-map">the repo</a> ' +
-        'and run <code>python serve.py</code> for live data.';
+        'Static snapshot — data is as of the timestamp above. Clone the repo ' +
+        '(linked below) and run <code>python serve.py</code> for live data.';
     }
 
     btn.addEventListener('click', async () => {
