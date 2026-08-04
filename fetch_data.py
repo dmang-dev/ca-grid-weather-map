@@ -790,7 +790,7 @@ def _fire_points_from_wfigs() -> dict:
         # WF excludes prescribed burns (RX), which aren't what this map is for.
         "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
         "outFields": ("IncidentName,IncidentSize,PercentContained,FireDiscoveryDateTime,"
-                      "POOCounty,POOProtectingAgency,IrwinID,FireOutDateTime"),
+                      "POOCounty,POOProtectingAgency,IrwinID,FireOutDateTime,FireCause"),
         "outSR": 4326,
         "f": "geojson",
     }, what="fire points (WFIGS)")
@@ -801,7 +801,7 @@ def _fire_points_from_mirror() -> dict:
     gj = arcgis_query(f"{FIRES_MIRROR_BASE}/0/query", {
         "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
         "outFields": ("IncidentName,DailyAcres,CalculatedAcres,PercentContained,"
-                      "FireDiscoveryDateTime,POOCounty,IrwinID,FireOutDateTime"),
+                      "FireDiscoveryDateTime,POOCounty,IrwinID,FireOutDateTime,FireCause"),
         "outSR": 4326,
         "f": "geojson",
     }, what="fire points mirror")
@@ -921,13 +921,77 @@ def fetch_fire_points() -> dict:
             unmapped += 1
 
     (DATA_DIR / "fire_points.geojson").write_text(json.dumps(gj))
+
+    # Push attributes back onto the perimeters. FIRIS rows are geometry and
+    # little else — no containment, cause, county or discovery date — while the
+    # point for the same fire has all of it, now with CAL FIRE's numbers on top.
+    # This runs here rather than in fetch_fires() because the dependency goes
+    # both ways: points need the perimeters to set _has_perimeter, so the
+    # perimeter file already exists by the time we get here.
+    perims_enriched = _backfill_perimeter_attrs(gj["features"])
+
     return {
         "incidents": len(gj["features"]),
         "without_perimeter": unmapped,
         "source": source,
         "calfire_enriched": enriched,
         "calfire_only": appended,
+        "perimeters_enriched": perims_enriched,
     }
+
+
+# Only ever filled in when the perimeter itself has nothing — WFIGS's own
+# values stay authoritative where it has them.
+_BACKFILL = {
+    "attr_PercentContained": ("PercentContained", "_calfire_contained"),
+    "attr_POOCounty": ("POOCounty",),
+    "attr_FireDiscoveryDateTime": ("FireDiscoveryDateTime",),
+    "attr_FireCause": ("FireCause",),
+}
+
+
+def _backfill_perimeter_attrs(points: list[dict]) -> int:
+    """Fill blank perimeter attributes from the incident point for that fire."""
+    path = DATA_DIR / "wildfires.geojson"
+    try:
+        perims = json.loads(path.read_text())
+    except Exception as e:
+        print(f"  [fire points] no perimeter file to backfill: {e}")
+        return 0
+
+    by_key: dict[str, dict] = {}
+    for f in points:
+        key = _fire_key(f["properties"].get("IncidentName"))
+        # Prefer the point carrying the most detail if a name repeats.
+        if key and (key not in by_key
+                    or sum(v is not None for v in f["properties"].values())
+                    > sum(v is not None for v in by_key[key].values())):
+            by_key[key] = f["properties"]
+
+    filled = 0
+    for f in perims["features"]:
+        p = f["properties"]
+        src = by_key.get(_fire_key(p.get("attr_IncidentName") or p.get("poly_IncidentName")))
+        if not src:
+            continue
+        touched = False
+        for target, candidates in _BACKFILL.items():
+            if p.get(target) is not None:
+                continue
+            for c in candidates:
+                if src.get(c) is not None:
+                    p[target] = src[c]
+                    touched = True
+                    break
+        # Carry the CAL FIRE link through so the perimeter popup can offer it.
+        if src.get("_calfire_url") and not p.get("_calfire_url"):
+            p["_calfire_url"] = src["_calfire_url"]
+            touched = True
+        if touched:
+            filled += 1
+
+    path.write_text(json.dumps(perims))
+    return filled
 
 
 # =============================================================================

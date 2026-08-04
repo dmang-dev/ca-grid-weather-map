@@ -572,7 +572,12 @@
                    fillOpacity: 0.45, dashArray: '3 3' },
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
-            const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed fire';
+            const rawName = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed fire';
+            // Attributes here may be backfilled from the incident point — FIRIS
+            // perimeters arrive as geometry with almost nothing attached.
+            const name = p._calfire_url
+              ? `<a href="${p._calfire_url}" target="_blank" rel="noopener">${rawName}</a>`
+              : rawName;
             const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
             const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : 'unknown';
             lyr.bindPopup(popupTable([

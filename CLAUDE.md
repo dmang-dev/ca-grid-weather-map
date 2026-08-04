@@ -90,6 +90,14 @@ mobile/                 Capacitor wrapper for Android/iOS
   other. FIRIS rows carry **no IRWIN id**, so cross-referencing them
   falls back to normalized incident name; that's why
   `fetch_fire_points()` checks both.
+- **FIRIS gives geometry, almost nothing else.** No containment, cause,
+  county or discovery date. `_backfill_perimeter_attrs()` fills those
+  from the incident point for the same fire, and only where the
+  perimeter is blank — WFIGS's own values stay authoritative. It lives
+  in `fetch_fire_points()` because the dependency runs both ways:
+  points need the perimeter file to set `_has_perimeter`, so it must
+  already be written. Expect partial coverage — perimeters older than
+  the WFIGS "Current" points feed have no point left to join to.
 - **A fire can still have no polygon anywhere.** Until the first IR
   flight, a fire exists only as a point. `fetch_fire_points()` covers
   that; `_has_perimeter: false` marks the ones no perimeter layer can
