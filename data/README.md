@@ -15,7 +15,8 @@ workflow regenerates these every 2 hours.
 | `psps.geojson` | CPUC PSPS event history (365 days) | `fetch_psps()` |
 | `nws_alerts.geojson` | api.weather.gov, clipped to CA | `fetch_alerts()` |
 | `wildfires.geojson` | NIFC WFIGS perimeters, or the Living Atlas mirror when WFIGS is throttled | `fetch_fires()` |
-| `fire_points.geojson` | WFIGS incident points, CA wildfires; `_has_perimeter` flags which ones the perimeter layer already draws | `fetch_fire_points()` |
+| `fire_points.geojson` | WFIGS incident points, CA wildfires, overlaid with CAL FIRE acreage; `_has_perimeter` flags which ones the perimeter layer already draws | `fetch_fire_points()` |
+| `calfire.geojson` | CAL FIRE incidents (`incidents.fire.ca.gov`) — fresher acreage/containment than IRWIN | `fetch_calfire()` |
 | `inciweb.geojson` | InciWeb incident origins | `fetch_inciweb()` |
 | `pge_territory.geojson` | CEC utility service territories (53 features) | `fetch_territory()` |
 | `ca_counties.geojson` | CA county subdivisions (58 features) | `fetch_counties()` |

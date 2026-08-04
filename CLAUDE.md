@@ -76,9 +76,17 @@ mobile/                 Capacitor wrapper for Android/iOS
   against exactly the new, fast-moving ones that matter most.
   `fetch_fire_points()` covers the gap with WFIGS incident points;
   `_has_perimeter: false` marks the ones the perimeter layer can't
-  show. Acreage on those points is IRWIN's and runs stale — CAL FIRE's
-  own API (`incidents.fire.ca.gov`) is fresher for state incidents but
-  isn't wired up.
+  show.
+- **IRWIN acreage goes stale; CAL FIRE's doesn't.** WFIGS reports
+  whatever IRWIN was last told, which on state incidents can be wildly
+  behind — Grade sat at 0.1 acres against CAL FIRE's 689.
+  `fetch_calfire()` pulls `incidents.fire.ca.gov` (plain JSON, not
+  ArcGIS) and `fetch_fire_points()` overlays it by normalized name +
+  county, confirmed by position. `_calfire_acres` wins over
+  `IncidentSize` everywhere in the UI. CAL FIRE incidents WFIGS lacks
+  get appended, unless a WFIGS point sits within 5 km — Cinder Complex
+  is 1.2 km from WFIGS's "5-4", the same fire under lightning-complex
+  numbering, and appending it would draw the fire twice.
 - Three CA utilities (LADWP, IID, PacifiCorp) don't publish to OES;
   their outage events will never appear no matter how robust the
   fetcher is.

@@ -538,7 +538,9 @@
       .then(r => r.json())
       .then(gj => {
         HOVER.firePoints = gj;
-        const acresOf = p => p.IncidentSize || 0;
+        // CAL FIRE's number wins when we have it — IRWIN's goes stale on state
+        // incidents (Grade sat at 0.1 acres against CAL FIRE's 689).
+        const acresOf = p => (p._calfire_acres != null ? p._calfire_acres : p.IncidentSize) || 0;
         const layer = L.geoJSON(gj, {
           pointToLayer: (feat, latlng) => {
             const p = feat.properties;
@@ -556,11 +558,18 @@
           },
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
-            const acres = p.IncidentSize != null
-              ? `${Math.round(p.IncidentSize).toLocaleString()} acres` : 'size not reported';
-            const cont = p.PercentContained != null ? `${p.PercentContained}%` : 'unknown';
+            const a = acresOf(p);
+            const acres = a
+              ? `${Math.round(a).toLocaleString()} acres` +
+                (p._calfire_acres != null ? ' <span class="pill">CAL FIRE</span>' : '')
+              : 'size not reported';
+            const c = p.PercentContained != null ? p.PercentContained : p._calfire_contained;
+            const cont = c != null ? `${c}%` : 'unknown';
+            const name = p._calfire_url
+              ? `<a href="${p._calfire_url}" target="_blank" rel="noopener">${p.IncidentName || 'Unnamed'}</a>`
+              : (p.IncidentName || 'Unnamed');
             lyr.bindPopup(popupTable([
-              ['Fire', `<b>${p.IncidentName || 'Unnamed'}</b>`],
+              ['Fire', `<b>${name}</b>`],
               ['Size', acres],
               ['Contained', cont],
               ['County', p.POOCounty || '—'],
@@ -569,6 +578,8 @@
               ['Perimeter', p._has_perimeter
                 ? 'mapped — see the polygon'
                 : '<span style="color:#ffb84d">not mapped yet</span>'],
+              ['CAL FIRE updated', p._calfire_updated
+                ? new Date(p._calfire_updated).toLocaleString() : '—'],
             ]));
           },
         });
@@ -705,8 +716,13 @@
       } else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
       if (live(m.fire_points)) {
         const src = m.fire_points.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
-        lines.push(`<b>Fire incidents:</b> ${m.fire_points.incidents}, ${m.fire_points.without_perimeter} with no perimeter mapped${src}${cachedNote(m.fire_points)}`);
+        const cf = m.fire_points.calfire_enriched
+          ? ` — ${m.fire_points.calfire_enriched} with CAL FIRE acreage` : '';
+        lines.push(`<b>Fire incidents:</b> ${m.fire_points.incidents}, ${m.fire_points.without_perimeter} with no perimeter mapped${src}${cf}${cachedNote(m.fire_points)}`);
       } else lines.push(`<b>Fire incidents:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.calfire))
+        lines.push(`<b>CAL FIRE:</b> ${m.calfire.active} active of ${m.calfire.incidents} this year${cachedNote(m.calfire)}`);
+      else lines.push(`<b>CAL FIRE:</b> <span style="color:#f77">failed</span>`);
       if (live(m.inciweb))
         lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
@@ -861,9 +877,10 @@
         });
         for (const f of fpHits) {
           const p = f.properties;
-          const acres = p.IncidentSize != null
-            ? `${Math.round(p.IncidentSize).toLocaleString()} ac` : 'size ?';
-          const cont = p.PercentContained != null ? `${p.PercentContained}%` : '?';
+          const a = p._calfire_acres != null ? p._calfire_acres : p.IncidentSize;
+          const acres = a != null ? `${Math.round(a).toLocaleString()} ac` : 'size ?';
+          const c = p.PercentContained != null ? p.PercentContained : p._calfire_contained;
+          const cont = c != null ? `${c}%` : '?';
           parts.push(`<b>${p.IncidentName || 'Unnamed'}</b> <span class="pill">${acres}</span>` +
             ` <span class="pill">${cont} contained</span> <span class="pill">no perimeter</span>`);
         }

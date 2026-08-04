@@ -12,6 +12,8 @@ does not kill the others. A run summary is written to data/manifest.json.
 from __future__ import annotations
 
 import json
+import math
+import re
 import sys
 import time
 import traceback
@@ -487,6 +489,32 @@ def _irwin(value) -> str:
     return (value or "").strip("{}").lower()
 
 
+def _fire_key(name) -> str:
+    """Normalize a fire name for cross-source matching.
+
+    CAL FIRE writes "Gann Fire", WFIGS writes "GANN". Strip the trailing noun
+    and punctuation so the two line up.
+    """
+    n = re.sub(r"\s+(FIRE|INCIDENT|COMPLEX)$", "", (name or "").upper().strip())
+    return re.sub(r"[^A-Z0-9 ]", "", n).strip()
+
+
+def _iso_to_ms(value):
+    """CAL FIRE ISO timestamp -> epoch ms, matching ArcGIS's date encoding."""
+    if not value:
+        return None
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _km_apart(lat1, lon1, lat2, lon2) -> float:
+    """Rough great-circle distance in km — fine at the scale we compare at."""
+    return math.hypot((lat1 - lat2) * 111.0,
+                      (lon1 - lon2) * 111.0 * math.cos(math.radians(lat1)))
+
+
 def _fires_from_wfigs() -> dict:
     return arcgis_query(FIRES_URL, {
         "where": "attr_POOState='US-CA'",
@@ -580,6 +608,56 @@ def fetch_fires() -> dict:
 
 
 # =============================================================================
+# 6a. CAL FIRE incidents — the state's own numbers, fresher than IRWIN's
+# =============================================================================
+# WFIGS carries whatever IRWIN was last told, which for state-responsibility
+# fires goes stale fast: Grade read 0.1 acres in WFIGS against 689 at CAL FIRE,
+# and Gann 3000 against 3760. CAL FIRE publishes plain JSON (not ArcGIS), so it
+# doesn't go through arcgis_query.
+CALFIRE_URL = "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List"
+
+
+def fetch_calfire() -> dict:
+    year = datetime.now(timezone.utc).year
+    last: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            r = HTTP.get(CALFIRE_URL, params={"year": year}, timeout=30)
+            r.raise_for_status()
+            items = r.json()
+            if not isinstance(items, list):
+                raise RuntimeError(f"CAL FIRE returned {type(items).__name__}, expected a list")
+            break
+        except (requests.RequestException, ValueError, RuntimeError) as e:
+            last = e
+            if attempt == 3:
+                raise
+            print(f"  [calfire] transient failure, retrying in 5s: {e}")
+            time.sleep(5)
+
+    features = []
+    for i in items:
+        lat, lon = i.get("Latitude"), i.get("Longitude")
+        # A few records carry 0/None coordinates; they can't be placed.
+        if not lat or not lon:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {k: i.get(k) for k in (
+                "Name", "AcresBurned", "PercentContained", "County", "Location",
+                "Started", "Updated", "IsActive", "Url", "AdminUnit", "Final")},
+        })
+    gj = {"type": "FeatureCollection", "features": features}
+    (DATA_DIR / "calfire.geojson").write_text(json.dumps(gj))
+    return {
+        "incidents": len(features),
+        "active": sum(1 for f in features if f["properties"].get("IsActive")),
+        "dropped_no_coords": len(items) - len(features),
+    }
+
+
+# =============================================================================
 # 6b. WFIGS incident points — fires with no mapped perimeter yet
 # =============================================================================
 # A perimeter polygon only exists once someone flies or GPS-walks the fire and
@@ -636,6 +714,71 @@ def fetch_fire_points() -> dict:
         gj = _fire_points_from_mirror()
         source = "living_atlas"
 
+    # Overlay CAL FIRE's numbers where they line up. Best-effort: WFIGS points
+    # with stale acreage still beat no points at all.
+    enriched = appended = 0
+    try:
+        cal = json.loads((DATA_DIR / "calfire.geojson").read_text())["features"]
+        by_key = {(_fire_key(c["properties"].get("Name")),
+                   (c["properties"].get("County") or "").upper()): c for c in cal}
+        used = set()
+        for f in gj["features"]:
+            p = f["properties"]
+            key = (_fire_key(p.get("IncidentName")), (p.get("POOCounty") or "").upper())
+            c = by_key.get(key)
+            if not c:
+                continue
+            lon, lat = f["geometry"]["coordinates"]
+            clon, clat = c["geometry"]["coordinates"]
+            # Name+county can collide across a big county; confirm by position.
+            if _km_apart(lat, lon, clat, clon) > 25:
+                continue
+            cp = c["properties"]
+            used.add(key)
+            p["_calfire_acres"] = cp.get("AcresBurned")
+            p["_calfire_contained"] = cp.get("PercentContained")
+            p["_calfire_updated"] = cp.get("Updated")
+            p["_calfire_url"] = cp.get("Url")
+            enriched += 1
+
+        # Active CAL FIRE incidents WFIGS hasn't got. Skip any with a WFIGS
+        # point close by: Cinder Complex sits 1.2 km from WFIGS's "5-4", the
+        # same fire under lightning-complex numbering, and appending it would
+        # draw the thing twice.
+        for c in cal:
+            cp = c["properties"]
+            key = (_fire_key(cp.get("Name")), (cp.get("County") or "").upper())
+            if key in used or not cp.get("IsActive"):
+                continue
+            clon, clat = c["geometry"]["coordinates"]
+            if any(_km_apart(clat, clon, f["geometry"]["coordinates"][1],
+                             f["geometry"]["coordinates"][0]) < 5
+                   for f in gj["features"]):
+                continue
+            started = cp.get("Started")
+            gj["features"].append({
+                "type": "Feature",
+                "geometry": c["geometry"],
+                "properties": {
+                    "IncidentName": cp.get("Name"),
+                    "IncidentSize": cp.get("AcresBurned"),
+                    "PercentContained": cp.get("PercentContained"),
+                    "POOCounty": cp.get("County"),
+                    "POOProtectingAgency": "CAL FIRE",
+                    "FireDiscoveryDateTime": _iso_to_ms(started),
+                    "IrwinID": None,
+                    "FireOutDateTime": None,
+                    "_calfire_acres": cp.get("AcresBurned"),
+                    "_calfire_contained": cp.get("PercentContained"),
+                    "_calfire_updated": cp.get("Updated"),
+                    "_calfire_url": cp.get("Url"),
+                    "_calfire_only": True,
+                },
+            })
+            appended += 1
+    except Exception as e:
+        print(f"  [fire points] CAL FIRE overlay unavailable: {e}")
+
     # Tag the points a perimeter already covers, so the map can play those down
     # and highlight the fires where the dot is the only thing there is to draw.
     mapped: set[str] = set()
@@ -660,6 +803,8 @@ def fetch_fire_points() -> dict:
         "incidents": len(gj["features"]),
         "without_perimeter": unmapped,
         "source": source,
+        "calfire_enriched": enriched,
+        "calfire_only": appended,
     }
 
 
@@ -787,7 +932,8 @@ def main() -> int:
         "territory": run_one("territory", fetch_territory, prev, "pge_territory.geojson"),
         "counties": run_one("counties", fetch_counties, prev, "ca_counties.geojson"),
         "fires": run_one("fires", fetch_fires, prev, "wildfires.geojson"),
-        # After fires — it cross-references the perimeter file this run wrote.
+        "calfire": run_one("calfire", fetch_calfire, prev, "calfire.geojson"),
+        # After fires and calfire — it cross-references both files this run wrote.
         "fire_points": run_one("fire_points", fetch_fire_points, prev, "fire_points.geojson"),
         "inciweb": run_one("inciweb", fetch_inciweb, prev, "inciweb.geojson"),
     }
