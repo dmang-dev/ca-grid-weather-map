@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-08-04T22:38:27.169998+00:00",
+  "generated_at": "2026-08-04T22:55:08.994902+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 3.1,
+    "duration_s": 2.7,
     "run": "2026-08-04T21:00:00",
     "grid": [
       261,
@@ -17,41 +17,41 @@
   },
   "raws": {
     "status": "ok",
-    "duration_s": 0.5,
-    "stations": 4208,
-    "max_gust_mph": 41,
-    "reporting_wind": 4208
+    "duration_s": 0.9,
+    "stations": 4422,
+    "max_gust_mph": 41.9,
+    "reporting_wind": 4422
   },
   "outages": {
     "status": "ok",
-    "duration_s": 1.6,
-    "outage_points": 193,
-    "outage_areas": 131
+    "duration_s": 0.9,
+    "outage_points": 187,
+    "outage_areas": 130
   },
   "psps": {
     "status": "ok",
-    "duration_s": 4.8,
+    "duration_s": 4.5,
     "events_total": 10,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 1.0,
+    "duration_s": 0.6,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 8.9,
+    "duration_s": 0.8,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 5.6,
+    "duration_s": 2.6,
     "counties": 58
   },
   "fires": {
@@ -65,14 +65,14 @@
   },
   "calfire": {
     "status": "ok",
-    "duration_s": 0.7,
+    "duration_s": 0.5,
     "incidents": 13,
     "active": 13,
     "dropped_no_coords": 0
   },
   "fire_points": {
     "status": "ok",
-    "duration_s": 0.2,
+    "duration_s": 0.3,
     "incidents": 92,
     "without_perimeter": 73,
     "source": "wfigs",
@@ -82,7 +82,7 @@
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.6,
+    "duration_s": 0.3,
     "incidents": 9
   }
 }
