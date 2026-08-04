@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-08-04T23:19:43.133853+00:00",
+  "generated_at": "2026-08-04T23:29:04.268794+00:00",
   "wind": {
     "status": "ok",
-    "duration_s": 3.3,
+    "duration_s": 3.1,
     "run": "2026-08-04T22:00:00",
     "grid": [
       261,
@@ -17,73 +17,73 @@
   },
   "raws": {
     "status": "ok",
-    "duration_s": 1.4,
+    "duration_s": 0.6,
     "stations": 4404,
     "max_gust_mph": 109.0,
     "reporting_wind": 4404
   },
   "outages": {
     "status": "ok",
-    "duration_s": 0.7,
+    "duration_s": 1.2,
     "outage_points": 197,
     "outage_areas": 147
   },
   "psps": {
     "status": "ok",
-    "duration_s": 4.1,
+    "duration_s": 4.8,
     "events_total": 10,
     "events_active": 0,
     "lookback_days": 365
   },
   "alerts": {
     "status": "ok",
-    "duration_s": 1.5,
+    "duration_s": 0.9,
     "alerts_total": 0,
     "by_event": {},
     "dropped_out_of_state": 0
   },
   "territory": {
     "status": "ok",
-    "duration_s": 1.5,
+    "duration_s": 6.0,
     "features": 53,
     "iou_count": 6,
     "pou_count": 47
   },
   "counties": {
     "status": "ok",
-    "duration_s": 1.1,
+    "duration_s": 2.7,
     "counties": 58
   },
   "fires": {
     "status": "ok",
-    "duration_s": 1.1,
-    "fires": 38,
-    "total_acres": 122354.0,
+    "duration_s": 1.0,
+    "fires": 37,
+    "total_acres": 121958.0,
     "source": "wfigs",
-    "firis_added": 25,
+    "firis_added": 24,
     "firis_fresher": 0
   },
   "calfire": {
     "status": "ok",
     "duration_s": 0.6,
-    "incidents": 14,
-    "active": 14,
+    "incidents": 15,
+    "active": 15,
     "dropped_no_coords": 0
   },
   "fire_points": {
     "status": "ok",
-    "duration_s": 0.2,
-    "incidents": 93,
-    "without_perimeter": 74,
+    "duration_s": 0.3,
+    "incidents": 94,
+    "without_perimeter": 75,
     "source": "wfigs",
     "calfire_enriched": 12,
-    "calfire_only": 1,
+    "calfire_only": 2,
     "perimeters_enriched": 13,
     "perimeters_via_alias": 2
   },
   "inciweb": {
     "status": "ok",
-    "duration_s": 0.7,
+    "duration_s": 0.5,
     "incidents": 9
   }
 }
