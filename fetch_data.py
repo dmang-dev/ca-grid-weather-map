@@ -668,6 +668,7 @@ FIRIS_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/
 # Long enough to keep a fire whose last IR flight was a while ago, short enough
 # not to redraw the whole season.
 FIRIS_MAX_AGE_DAYS = 21
+_FIRIS_REVISION_SUFFIX = re.compile(r"\s*-\s*UPDATED\s*$", re.I)
 
 
 def _fires_from_firis() -> list[dict]:
@@ -684,6 +685,13 @@ def _fires_from_firis() -> list[dict]:
     latest: dict[str, dict] = {}
     for f in gj["features"]:
         p = f["properties"]
+        # FIRIS sometimes re-uploads a fire under a "-UPDATED" name, which then
+        # draws twice: RUMSEY and RUMSEY-UPDATED sat 0.01 km apart at 396 and
+        # 380 acres. Fold the suffix away so the latest-flight rule below keeps
+        # only the fresher one. Strictly -UPDATED — a trailing number is a real
+        # sub-fire (CINDERCOMPLEX-5-3), not a revision marker.
+        p["incident_name"] = _FIRIS_REVISION_SUFFIX.sub(
+            "", (p.get("incident_name") or "").strip())
         key = _fire_key(p.get("incident_name"))
         # The layer carries unnamed rows literally called "NONE".
         if not key or key == "NONE" or not f.get("geometry"):

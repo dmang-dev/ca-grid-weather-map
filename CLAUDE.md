@@ -105,6 +105,10 @@ mobile/                 Capacitor wrapper for Android/iOS
   which is what WFIGS calls it. That alias can be as short as `53`, so
   **alias hits must be confirmed geometrically** (40 km) before they're
   trusted — the primary key match doesn't need it, the alias does.
+  FIRIS also re-uploads a fire as "<NAME>-UPDATED" now and then, which
+  drew the same fire twice (RUMSEY vs RUMSEY-UPDATED, 0.01 km apart);
+  `_FIRIS_REVISION_SUFFIX` folds that away before the latest-flight
+  dedup. Only `-UPDATED` — a trailing *number* is a real sub-fire.
 - **A fire can still have no polygon anywhere.** Until the first IR
   flight, a fire exists only as a point. `fetch_fire_points()` covers
   that; `_has_perimeter: false` marks the ones no perimeter layer can
