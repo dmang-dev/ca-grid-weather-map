@@ -68,6 +68,17 @@ mobile/                 Capacitor wrapper for Android/iOS
 
 - HRRR is forecast wind, not observed wind. RTMA would be observed (at
   the cost of more complex GRIB processing).
+- **Perimeters lag the fire.** WFIGS only has a polygon once someone
+  flies or walks the fire and a GIS specialist uploads it — a day or
+  more, worst on CAL FIRE state-responsibility incidents, which don't
+  feed the national pipeline as promptly as federal ones. A
+  perimeter-only map shows *nothing* for those fires, which skews
+  against exactly the new, fast-moving ones that matter most.
+  `fetch_fire_points()` covers the gap with WFIGS incident points;
+  `_has_perimeter: false` marks the ones the perimeter layer can't
+  show. Acreage on those points is IRWIN's and runs stale — CAL FIRE's
+  own API (`incidents.fire.ca.gov`) is fresher for state incidents but
+  isn't wired up.
 - Three CA utilities (LADWP, IID, PacifiCorp) don't publish to OES;
   their outage events will never appear no matter how robust the
   fetcher is.

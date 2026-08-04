@@ -492,7 +492,7 @@ def _fires_from_wfigs() -> dict:
         "where": "attr_POOState='US-CA'",
         "outFields": ("poly_IncidentName,poly_GISAcres,poly_DateCurrent,"
                       "attr_IncidentName,attr_PercentContained,attr_FireDiscoveryDateTime,"
-                      "attr_FireCause,attr_IncidentTypeCategory,attr_POOCounty"),
+                      "attr_FireCause,attr_IncidentTypeCategory,attr_POOCounty,attr_IrwinID"),
         "outSR": 4326,
         "f": "geojson",
     }, what="fires (WFIGS)")
@@ -554,6 +554,9 @@ def _fires_from_mirror() -> dict:
                 "attr_IncidentTypeCategory": (a.get("IncidentTypeCategory")
                                               or p.get("IncidentTypeCategory")),
                 "attr_POOCounty": a.get("POOCounty"),
+                # Normalized so the incident-point layer can tell which fires
+                # already have a perimeter drawn, whichever source we used.
+                "attr_IrwinID": _irwin(p.get("IRWINID")) or None,
             },
         })
     return {"type": "FeatureCollection", "features": out}
@@ -574,6 +577,52 @@ def fetch_fires() -> dict:
         "total_acres": round(total_acres, 0),
         "source": source,
     }
+
+
+# =============================================================================
+# 6b. WFIGS incident points — fires with no mapped perimeter yet
+# =============================================================================
+# A perimeter polygon only exists once someone flies or GPS-walks the fire and
+# a GIS specialist uploads it, which can lag a day or more — and lags hardest
+# on CAL FIRE state-responsibility incidents, which don't feed the national
+# pipeline as promptly as federal ones. Until that upload happens the fire has
+# an IRWIN record and no geometry, so a perimeter-only map shows nothing at
+# all. These points cover the gap.
+FIRE_POINTS_URL = ("https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
+                   "WFIGS_Incident_Locations_Current/FeatureServer/0/query")
+
+
+def fetch_fire_points() -> dict:
+    gj = arcgis_query(FIRE_POINTS_URL, {
+        # WF excludes prescribed burns (RX), which aren't what this map is for.
+        "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
+        "outFields": ("IncidentName,IncidentSize,PercentContained,FireDiscoveryDateTime,"
+                      "POOCounty,POOProtectingAgency,IrwinID,FireOutDateTime"),
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="fire points")
+
+    # Tag the points a perimeter already covers, so the map can play those down
+    # and highlight the fires where the dot is the only thing there is to draw.
+    mapped: set[str] = set()
+    try:
+        perims = json.loads((DATA_DIR / "wildfires.geojson").read_text())
+        mapped = {_irwin(f["properties"].get("attr_IrwinID"))
+                  for f in perims["features"]} - {""}
+    except Exception as e:
+        # Fail toward visibility: without the cross-reference every point is
+        # treated as unmapped, which over-draws rather than hiding a fire.
+        print(f"  [fire points] no perimeter file to cross-reference ({e})")
+
+    unmapped = 0
+    for f in gj["features"]:
+        p = f["properties"]
+        p["_has_perimeter"] = _irwin(p.get("IrwinID")) in mapped
+        if not p["_has_perimeter"]:
+            unmapped += 1
+
+    (DATA_DIR / "fire_points.geojson").write_text(json.dumps(gj))
+    return {"incidents": len(gj["features"]), "without_perimeter": unmapped}
 
 
 # =============================================================================
@@ -700,13 +749,17 @@ def main() -> int:
         "territory": run_one("territory", fetch_territory, prev, "pge_territory.geojson"),
         "counties": run_one("counties", fetch_counties, prev, "ca_counties.geojson"),
         "fires": run_one("fires", fetch_fires, prev, "wildfires.geojson"),
+        # After fires — it cross-references the perimeter file this run wrote.
+        "fire_points": run_one("fire_points", fetch_fire_points, prev, "fire_points.geojson"),
         "inciweb": run_one("inciweb", fetch_inciweb, prev, "inciweb.geojson"),
     }
     (DATA_DIR / "manifest.json").write_text(json.dumps(results, indent=2))
     print("\nmanifest:")
     print(json.dumps(results, indent=2))
-    # Non-zero exit only if EVERYTHING failed.
-    ok = sum(1 for k in ("wind", "outages", "psps", "alerts", "territory", "counties", "fires", "inciweb") if results[k]["status"] == "ok")
+    # Non-zero exit only if EVERYTHING failed. Derived from the results rather
+    # than a hardcoded key list, so adding a fetcher can't silently skip it.
+    ok = sum(1 for v in results.values()
+             if isinstance(v, dict) and v.get("status") == "ok")
     return 0 if ok > 0 else 1
 
 

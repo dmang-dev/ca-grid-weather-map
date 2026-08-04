@@ -252,6 +252,7 @@
       outagePointsOther: null, // GeoJSON — SCE/SDGE/SMUD point outages
       psps: null,        // GeoJSON
       fires: null,       // GeoJSON — active wildfire perimeters
+      firePoints: null,  // GeoJSON — WFIGS incident points (incl. unmapped fires)
       inciweb: null,     // GeoJSON — InciWeb incident points
     };
 
@@ -527,6 +528,57 @@
       })
       .catch(err => console.warn('wildfires failed:', err));
 
+    // --- 2c-bis. WFIGS incident points ---
+    // A fire only gets a perimeter polygon once someone maps and uploads one,
+    // which lags — hardest on CAL FIRE state incidents. Points marked
+    // _has_perimeter=false are fires the perimeter layer cannot show at all,
+    // so they're drawn boldly; the rest are dimmed origin markers under their
+    // own polygon.
+    fetch('data/fire_points.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.firePoints = gj;
+        const acresOf = p => p.IncidentSize || 0;
+        const layer = L.geoJSON(gj, {
+          pointToLayer: (feat, latlng) => {
+            const p = feat.properties;
+            const unmapped = !p._has_perimeter;
+            // Area-proportional-ish radius, clamped so a 70k-acre fire doesn't
+            // swallow the state and a 0.1-acre one stays clickable.
+            const r = Math.max(5, Math.min(13, 5 + Math.sqrt(acresOf(p)) / 12));
+            return L.circleMarker(latlng, {
+              radius: unmapped ? r : 4,
+              color: unmapped ? '#ff3300' : '#8a4a3a',
+              weight: unmapped ? 2.5 : 1,
+              fillColor: unmapped ? '#ff9c33' : '#6b4636',
+              fillOpacity: unmapped ? 0.85 : 0.5,
+            });
+          },
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            const acres = p.IncidentSize != null
+              ? `${Math.round(p.IncidentSize).toLocaleString()} acres` : 'size not reported';
+            const cont = p.PercentContained != null ? `${p.PercentContained}%` : 'unknown';
+            lyr.bindPopup(popupTable([
+              ['Fire', `<b>${p.IncidentName || 'Unnamed'}</b>`],
+              ['Size', acres],
+              ['Contained', cont],
+              ['County', p.POOCounty || '—'],
+              ['Protecting', p.POOProtectingAgency || '—'],
+              ['Discovered', fmtDate(p.FireDiscoveryDateTime)],
+              ['Perimeter', p._has_perimeter
+                ? 'mapped — see the polygon'
+                : '<span style="color:#ffb84d">not mapped yet</span>'],
+            ]));
+          },
+        });
+        layer.addTo(map);
+        const unmapped = gj.features.filter(f => !f.properties._has_perimeter).length;
+        overlays[`Fire incidents (${gj.features.length} — ${unmapped} unmapped)`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('fire points failed:', err));
+
     // --- 2d. InciWeb incident points (rich narrative for active incidents) ---
     fetch('data/inciweb.geojson')
       .then(r => r.json())
@@ -651,6 +703,9 @@
         const src = m.fires.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
         lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)${src}${cachedNote(m.fires)}`);
       } else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.fire_points))
+        lines.push(`<b>Fire incidents:</b> ${m.fire_points.incidents}, ${m.fire_points.without_perimeter} with no perimeter mapped${cachedNote(m.fire_points)}`);
+      else lines.push(`<b>Fire incidents:</b> <span style="color:#f77">failed</span>`);
       if (live(m.inciweb))
         lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
@@ -773,21 +828,29 @@
           (planned ? ` <span class="pill">${planned} planned</span>` : '');
       } else hp.outages.innerHTML = NONE;
 
-      // Wildfires — perimeter polygons (WFIGS) + InciWeb origin points snapped within ~22 px
+      // Wildfires — perimeter polygons (WFIGS), plus incident points snapped
+      // within ~22 px: WFIGS points for fires with no perimeter, and InciWeb.
       const fires = pipFeatures(HOVER.fires, pt);
-      let iwHits = [];
-      if (HOVER.inciweb) {
+      const snapHits = (gj, filter) => {
+        if (!gj) return [];
         const cursorPx = map.latLngToLayerPoint(latlng);
         const SNAP_PX_SQ = 22 * 22;
-        for (const f of HOVER.inciweb.features) {
+        const out = [];
+        for (const f of gj.features) {
           if (!f.geometry) continue;
+          if (filter && !filter(f)) continue;
           const [lon, lat] = f.geometry.coordinates;
           const px = map.latLngToLayerPoint(L.latLng(lat, lon));
           const dx = px.x - cursorPx.x, dy = px.y - cursorPx.y;
-          if (dx*dx + dy*dy < SNAP_PX_SQ) iwHits.push(f);
+          if (dx*dx + dy*dy < SNAP_PX_SQ) out.push(f);
         }
-      }
-      if (fires.length || iwHits.length) {
+        return out;
+      };
+      const iwHits = snapHits(HOVER.inciweb);
+      // Unmapped only — a point under its own polygon would just repeat the
+      // perimeter line directly above it.
+      const fpHits = snapHits(HOVER.firePoints, f => !f.properties._has_perimeter);
+      if (fires.length || fpHits.length || iwHits.length) {
         const parts = fires.map(f => {
           const p = f.properties;
           const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed';
@@ -795,6 +858,14 @@
           const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : '?';
           return `<b>${name}</b> <span class="pill">${acres} ac</span> <span class="pill">${cont} contained</span>`;
         });
+        for (const f of fpHits) {
+          const p = f.properties;
+          const acres = p.IncidentSize != null
+            ? `${Math.round(p.IncidentSize).toLocaleString()} ac` : 'size ?';
+          const cont = p.PercentContained != null ? `${p.PercentContained}%` : '?';
+          parts.push(`<b>${p.IncidentName || 'Unnamed'}</b> <span class="pill">${acres}</span>` +
+            ` <span class="pill">${cont} contained</span> <span class="pill">no perimeter</span>`);
+        }
         for (const f of iwHits) {
           const p = f.properties;
           parts.push(`<b>${p.IncidentName}</b> <span class="pill">InciWeb</span>`);
