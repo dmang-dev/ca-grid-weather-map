@@ -18,6 +18,7 @@ workflow regenerates these every 2 hours.
 | `wildfires.geojson` | NIFC WFIGS perimeters (Living Atlas mirror when throttled), unioned with CAL FIRE/FIRIS IR heat perimeters; `_perimeter_source` says which | `fetch_fires()` |
 | `fire_points.geojson` | WFIGS incident points, CA wildfires, overlaid with CAL FIRE acreage; `_has_perimeter` flags which ones the perimeter layer already draws | `fetch_fire_points()` |
 | `calfire.geojson` | CAL FIRE incidents (`incidents.fire.ca.gov`) — fresher acreage/containment than IRWIN | `fetch_calfire()` |
+| `evacuations.geojson` | Active evacuation zones (Genasys/Zonehaven via CAL FIRE) — orders, warnings, advisories | `fetch_evacuations()` |
 | `inciweb.geojson` | InciWeb incident origins | `fetch_inciweb()` |
 | `pge_territory.geojson` | CEC utility service territories (53 features) | `fetch_territory()` |
 | `ca_counties.geojson` | CA county subdivisions (58 features) | `fetch_counties()` |

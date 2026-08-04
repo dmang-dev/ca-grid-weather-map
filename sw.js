@@ -7,7 +7,7 @@
 //
 // Bump CACHE_NAME any time the shell URLs change so old caches get evicted.
 
-const CACHE_NAME = 'cagrid-shell-v8';
+const CACHE_NAME = 'cagrid-shell-v10';
 const SHELL_ASSETS = [
   './',
   './index.html',

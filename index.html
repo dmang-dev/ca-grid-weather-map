@@ -175,6 +175,7 @@
     <div class="row"><div class="k">Outages</div><div class="v" id="hp-outages">—</div></div>
     <div class="row"><div class="k">PSPS</div><div class="v" id="hp-psps">—</div></div>
     <div class="row"><div class="k">Wildfire</div><div class="v" id="hp-fires">—</div></div>
+    <div class="row"><div class="k">Evacuation</div><div class="v" id="hp-evac">—</div></div>
   </aside>
 
   <header class="info-box" role="region" aria-label="Map status and data refresh">
@@ -200,6 +201,9 @@
     <div class="row"><span class="sw" aria-hidden="true" style="background:#7e5cff;opacity:.55"></span>PSPS event footprint (historical)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff3b3b;opacity:.7"></span>PSPS event footprint (active)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6633;border:2px dashed #ff3300"></span>Active wildfire perimeter (WFIGS)</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#d92b2b;border:2px solid #ff5c5c"></span>Evacuation ORDER</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#e8a33d;border:2px solid #ffc973"></span>Evacuation WARNING</div>
+    <div class="row"><span class="sw" aria-hidden="true" style="background:#4a86c8;border:2px solid #7fb4e8"></span>Evacuation advisory</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff6600;border:2px solid #ffd700;border-radius:50%"></span>InciWeb incident (origin point)</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ff5050;border-color:#ff2a2a"></span>NWS Red Flag Warning</div>
     <div class="row"><span class="sw" aria-hidden="true" style="background:#ffae40;border:1.5px dashed #ff8c1a"></span>NWS Fire Weather Watch</div>
@@ -252,6 +256,7 @@
       outagePointsOther: null, // GeoJSON — SCE/SDGE/SMUD point outages
       psps: null,        // GeoJSON
       raws: null,        // GeoJSON — RAWS stations, observed wind
+      evac: null,        // GeoJSON — active evacuation zones (Zonehaven)
       fires: null,       // GeoJSON — active wildfire perimeters
       firePoints: null,  // GeoJSON — WFIGS incident points (incl. unmapped fires)
       inciweb: null,     // GeoJSON — InciWeb incident points
@@ -662,6 +667,48 @@
       })
       .catch(err => console.warn('fire points failed:', err));
 
+    // --- 2c-ter. Evacuation zones (Genasys/Zonehaven via CAL FIRE) ---
+    // The layer only carries zones that aren't Normal, so everything here is a
+    // live order, warning or advisory. Drawn on by default and above the fire
+    // layers: "who has been told to leave" outranks everything else on the map.
+    fetch('data/evacuations.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.evac = gj;
+        const STYLE = {
+          'Evacuation Order':   { color: '#ff5c5c', fillColor: '#d92b2b', fillOpacity: 0.45, weight: 2.5 },
+          'Evacuation Warning': { color: '#ffc973', fillColor: '#e8a33d', fillOpacity: 0.35, weight: 2 },
+          'Advisory':           { color: '#7fb4e8', fillColor: '#4a86c8', fillOpacity: 0.25, weight: 1.5 },
+        };
+        const styleFor = s => STYLE[s] || { color: '#aab', fillColor: '#889', fillOpacity: 0.2, weight: 1.5 };
+        const layer = L.geoJSON(gj, {
+          style: feat => styleFor(feat.properties.zone_status),
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            const zone = p.zone_id || p.known_as || 'Zone';
+            const title = p.url
+              ? `<a href="${p.url}" target="_blank" rel="noopener">${zone}</a>` : zone;
+            // zone_status_reason is free text written by the issuing agency.
+            const reason = (p.zone_status_reason || '').trim();
+            lyr.bindPopup(popupTable([
+              ['Zone', `<b>${title}</b>`],
+              ['Status', `<b>${p.zone_status || '—'}</b>`],
+              ['County', p.county_name || '—'],
+              ['Community', p.community || '—'],
+              ['Source', p.data_source_name || 'Zonehaven'],
+            ]) + (reason
+              ? `<div style="margin-top:6px;max-width:380px;white-space:pre-wrap;font-size:11px">${reason}</div>`
+              : ''), { maxWidth: 420 });
+          },
+        });
+        layer.addTo(map);
+        layer.bringToFront();
+        const n = s => gj.features.filter(f => f.properties.zone_status === s).length;
+        overlays[`Evacuation zones (${n('Evacuation Order')} order, ${n('Evacuation Warning')} warning, ${n('Advisory')} advisory)`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('evacuations failed:', err));
+
     // --- 2d. InciWeb incident points (rich narrative for active incidents) ---
     fetch('data/inciweb.geojson')
       .then(r => r.json())
@@ -800,6 +847,12 @@
       if (live(m.calfire))
         lines.push(`<b>CAL FIRE:</b> ${m.calfire.active} active of ${m.calfire.incidents} this year${cachedNote(m.calfire)}`);
       else lines.push(`<b>CAL FIRE:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.evacuations)) {
+        const e = m.evacuations;
+        lines.push(`<b>Evacuations:</b> ${e.zones} zones — <span style="color:#ff7b7b">${e.orders} order</span>, ` +
+                   `<span style="color:#ffc973">${e.warnings} warning</span>, ${e.advisories} advisory ` +
+                   `(${e.counties} counties)${cachedNote(e)}`);
+      } else lines.push(`<b>Evacuations:</b> <span style="color:#f77">failed</span>`);
       if (live(m.inciweb))
         lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
@@ -819,6 +872,7 @@
       outages: document.getElementById('hp-outages'),
       psps: document.getElementById('hp-psps'),
       fires: document.getElementById('hp-fires'),
+      evac: document.getElementById('hp-evac'),
     };
     const NONE = '<span class="none">—</span>';
     const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
@@ -942,9 +996,14 @@
         return out;
       };
       const iwHits = snapHits(HOVER.inciweb);
-      // Unmapped only — a point under its own polygon would just repeat the
-      // perimeter line directly above it.
-      const fpHits = snapHits(HOVER.firePoints, f => !f.properties._has_perimeter);
+      // A point is only redundant when its own perimeter is already under the
+      // cursor. An origin point can sit well outside the burn area — Gann's is
+      // 4 km out — and suppressing those left a visible dot reporting nothing.
+      const firesHere = new Set(fires.map(f =>
+        String(f.properties.attr_IncidentName || f.properties.poly_IncidentName || '').toUpperCase()));
+      const fpHits = snapHits(HOVER.firePoints, f =>
+        !f.properties._has_perimeter ||
+        !firesHere.has(String(f.properties.IncidentName || '').toUpperCase()));
       if (fires.length || fpHits.length || iwHits.length) {
         const parts = fires.map(f => {
           const p = f.properties;
@@ -960,7 +1019,8 @@
           const c = p.PercentContained != null ? p.PercentContained : p._calfire_contained;
           const cont = c != null ? `${c}%` : '?';
           parts.push(`<b>${p.IncidentName || 'Unnamed'}</b> <span class="pill">${acres}</span>` +
-            ` <span class="pill">${cont} contained</span> <span class="pill">no perimeter</span>`);
+            ` <span class="pill">${cont} contained</span>` +
+            ` <span class="pill">${p._has_perimeter ? 'origin point' : 'no perimeter'}</span>`);
         }
         for (const f of iwHits) {
           const p = f.properties;
@@ -968,6 +1028,23 @@
         }
         hp.fires.innerHTML = parts.join('<br/>');
       } else hp.fires.innerHTML = NONE;
+
+      // Evacuation zones — order first, they're the ones that matter most.
+      const evac = pipFeatures(HOVER.evac, pt);
+      if (evac.length) {
+        const RANK = { 'Evacuation Order': 0, 'Evacuation Warning': 1, 'Advisory': 2 };
+        const COLOR = { 'Evacuation Order': '#ff7b7b', 'Evacuation Warning': '#ffc973', 'Advisory': '#9ccbf5' };
+        hp.evac.innerHTML = evac
+          .slice()
+          .sort((a, b) => (RANK[a.properties.zone_status] ?? 9) - (RANK[b.properties.zone_status] ?? 9))
+          .map(f => {
+            const p = f.properties;
+            const c = COLOR[p.zone_status] || '#ccc';
+            return `<b style="color:${c}">${p.zone_status || '?'}</b> ` +
+                   `<span class="pill">${p.zone_id || p.known_as || 'zone'}</span>` +
+                   (p.county_name ? ` <span style="color:#9aa0a6">${p.county_name}</span>` : '');
+          }).join('<br/>');
+      } else hp.evac.innerHTML = NONE;
 
       // PSPS
       const psps = pipFeatures(HOVER.psps, pt);

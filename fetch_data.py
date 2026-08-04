@@ -1109,6 +1109,46 @@ def fetch_raws() -> dict:
 
 
 # =============================================================================
+# 6d. Evacuation zones — who has actually been told to leave
+# =============================================================================
+# Genasys's product is Zonehaven, and CAL FIRE republishes it here (the layer
+# is named Zonehaven_Evacuation_Status_exp3) alongside zones some counties
+# publish themselves. Public, no token, and it only carries zones that are
+# *not* Normal — so everything in it is a live order, warning or advisory.
+EVAC_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/"
+            "services/California_Combined_Statewide_Evacuation_Public_View/"
+            "FeatureServer/0/query")
+
+
+def fetch_evacuations() -> dict:
+    gj = arcgis_query_all(EVAC_URL, {
+        # Belt and braces: the layer is already filtered upstream, but say so
+        # in case it ever starts carrying the Normal zones too.
+        "where": "zone_status IS NOT NULL AND zone_status <> 'Normal'",
+        "outFields": ("zone_id,zone_status,zone_status_reason,county_name,community,"
+                      "acreage,last_updated,url,known_as,data_source_name"),
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="evacuations")
+
+    gj["features"] = [f for f in gj["features"] if f.get("geometry")]
+    counts: dict[str, int] = {}
+    for f in gj["features"]:
+        s = f["properties"].get("zone_status") or "Unknown"
+        counts[s] = counts.get(s, 0) + 1
+
+    (DATA_DIR / "evacuations.geojson").write_text(json.dumps(gj))
+    return {
+        "zones": len(gj["features"]),
+        "orders": counts.get("Evacuation Order", 0),
+        "warnings": counts.get("Evacuation Warning", 0),
+        "advisories": counts.get("Advisory", 0),
+        "counties": len({f["properties"].get("county_name")
+                         for f in gj["features"] if f["properties"].get("county_name")}),
+    }
+
+
+# =============================================================================
 # 7. InciWeb incidents (origin points + rich narrative metadata)
 # =============================================================================
 # WFIGS gives us fire perimeters; InciWeb gives us per-incident pages with
@@ -1236,6 +1276,7 @@ def main() -> int:
         "calfire": run_one("calfire", fetch_calfire, prev, "calfire.geojson"),
         # After fires and calfire — it cross-references both files this run wrote.
         "fire_points": run_one("fire_points", fetch_fire_points, prev, "fire_points.geojson"),
+        "evacuations": run_one("evacuations", fetch_evacuations, prev, "evacuations.geojson"),
         "inciweb": run_one("inciweb", fetch_inciweb, prev, "inciweb.geojson"),
     }
     (DATA_DIR / "manifest.json").write_text(json.dumps(results, indent=2))

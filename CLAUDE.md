@@ -109,6 +109,14 @@ mobile/                 Capacitor wrapper for Android/iOS
   drew the same fire twice (RUMSEY vs RUMSEY-UPDATED, 0.01 km apart);
   `_FIRIS_REVISION_SUFFIX` folds that away before the latest-flight
   dedup. Only `-UPDATED` — a trailing *number* is a real sub-fire.
+- **Evacuation zones are Zonehaven, not a CAL FIRE original.** Genasys's
+  product is Zonehaven; CAL FIRE republishes it (plus zones some counties
+  publish themselves — one current record comes from Tuolumne County's
+  own ArcGIS, so don't filter on `state_abbr`, which is null there). The
+  layer carries *only* non-Normal zones, so everything in it is live.
+  `est_population` and `structure_count` are null on every record —
+  don't build on them. `last_updated` is unreliable: some timestamps
+  land hours in the future, so the UI never prints an age for a zone.
 - **A fire can still have no polygon anywhere.** Until the first IR
   flight, a fire exists only as a point. `fetch_fire_points()` covers
   that; `_has_perimeter: false` marks the ones no perimeter layer can
