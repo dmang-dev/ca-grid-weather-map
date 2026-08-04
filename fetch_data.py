@@ -112,6 +112,31 @@ def arcgis_query(url: str, params: dict, *, what: str, timeout: int = 60,
     raise exc  # unreachable; keeps type checkers happy
 
 
+def arcgis_query_all(url: str, params: dict, *, what: str, page_size: int = 2000,
+                     max_pages: int = 20, **kwargs) -> dict:
+    """Page through a query whose result exceeds the server's maxRecordCount.
+
+    Do not trust exceededTransferLimit to tell you when this is needed: the
+    RAWS layer returns exactly 2000 features with the flag *absent* while
+    holding 4208, so a single query silently drops half the stations.
+    """
+    collected: list[dict] = []
+    gj: dict = {"type": "FeatureCollection", "features": []}
+    for page in range(max_pages):
+        gj = arcgis_query(url, {**params, "resultOffset": page * page_size,
+                                "resultRecordCount": page_size},
+                          what=f"{what} p{page + 1}", **kwargs)
+        batch = gj["features"]
+        collected.extend(batch)
+        if len(batch) < page_size:
+            break
+    else:
+        print(f"  [{what}] WARNING: stopped at {max_pages} pages "
+              f"({len(collected)} features); results may be incomplete")
+    gj["features"] = collected
+    return gj
+
+
 # =============================================================================
 # 1. HRRR wind
 # =============================================================================
@@ -906,6 +931,52 @@ def fetch_fire_points() -> dict:
 
 
 # =============================================================================
+# 6c. RAWS observed wind — the ground truth HRRR is forecasting
+# =============================================================================
+# HRRR gives a smooth modelled field; RAWS gives what anemometers actually
+# recorded. Both matter here: the forecast shows where wind is heading, the
+# stations show whether it arrived. Published by the same CAL FIRE ArcGIS org
+# as the FIRIS perimeters, updated within the hour.
+RAWS_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/"
+            "services/RAWS_Wind_2D_Public_View/FeatureServer/0/query")
+
+
+def fetch_raws() -> dict:
+    gj = arcgis_query_all(RAWS_URL, {
+        "where": "1=1",
+        "outFields": ("station_id,station_name,wind_speed_mph,wind_direction_deg,"
+                      "wind_gust_mph,peak_wind_speed_mph,wind_cardinal_direction,"
+                      "relative_humidity_pct,air_temp_f,last_updated"),
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="RAWS")
+
+    # Round the floats — the raw feed carries 14 significant digits per field
+    # across 4000+ stations, which is most of the file for no added meaning.
+    round1 = ("wind_speed_mph", "wind_gust_mph", "peak_wind_speed_mph",
+              "relative_humidity_pct", "air_temp_f")
+    kept = []
+    for f in gj["features"]:
+        if not f.get("geometry"):
+            continue
+        p = f["properties"]
+        for k in round1:
+            if isinstance(p.get(k), float):
+                p[k] = round(p[k], 1)
+        kept.append(f)
+    gj["features"] = kept
+
+    (DATA_DIR / "raws.geojson").write_text(json.dumps(gj))
+    speeds = [f["properties"].get("wind_gust_mph") or 0 for f in kept]
+    return {
+        "stations": len(kept),
+        "max_gust_mph": round(max(speeds), 1) if speeds else None,
+        "reporting_wind": sum(1 for f in kept
+                              if f["properties"].get("wind_speed_mph") is not None),
+    }
+
+
+# =============================================================================
 # 7. InciWeb incidents (origin points + rich narrative metadata)
 # =============================================================================
 # WFIGS gives us fire perimeters; InciWeb gives us per-incident pages with
@@ -1023,6 +1094,7 @@ def main() -> int:
     results = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "wind": run_one("wind", fetch_wind, prev, "wind.json"),
+        "raws": run_one("raws", fetch_raws, prev, "raws.geojson"),
         "outages": run_one("outages", fetch_outages, prev, "outage_points.geojson"),
         "psps": run_one("psps", fetch_psps, prev, "psps.geojson"),
         "alerts": run_one("alerts", fetch_alerts, prev, "nws_alerts.geojson"),

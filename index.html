@@ -251,6 +251,7 @@
       outageAreas: null, // GeoJSON — PG&E polygon footprints
       outagePointsOther: null, // GeoJSON — SCE/SDGE/SMUD point outages
       psps: null,        // GeoJSON
+      raws: null,        // GeoJSON — RAWS stations, observed wind
       fires: null,       // GeoJSON — active wildfire perimeters
       firePoints: null,  // GeoJSON — WFIGS incident points (incl. unmapped fires)
       inciweb: null,     // GeoJSON — InciWeb incident points
@@ -260,6 +261,31 @@
     function fmtDate(ms) {
       if (ms == null) return '—';
       return new Date(ms).toLocaleString();
+    }
+    // Nearest RAWS station to the cursor, as an observed-vs-forecast footnote.
+    // Only within 25 km — a station two counties away says nothing about the
+    // wind here, and a stale reading is worse than none.
+    function nearestRawsHtml(latlng) {
+      if (!HOVER.raws) return '';
+      let best = null, bestKm = Infinity;
+      const cosLat = Math.cos(latlng.lat * Math.PI / 180);
+      for (const f of HOVER.raws.features) {
+        if (!f.geometry) continue;
+        const [lon, lat] = f.geometry.coordinates;
+        const dx = (lon - latlng.lng) * 111 * cosLat, dy = (lat - latlng.lat) * 111;
+        const km = dx * dx + dy * dy;   // squared; only used for ranking
+        if (km < bestKm) { bestKm = km; best = f; }
+      }
+      if (!best) return '';
+      const km = Math.sqrt(bestKm);
+      if (km > 25) return '';
+      const p = best.properties;
+      if (p.wind_speed_mph == null) return '';
+      const gust = p.wind_gust_mph != null ? `, gust ${p.wind_gust_mph}` : '';
+      const name = (p.station_name || p.station_id || 'station').replace(/</g, '&lt;');
+      return `<br/><span class="pill" title="RAWS observed, ${km.toFixed(0)} km away">obs</span> ` +
+             `${p.wind_speed_mph} mph ${p.wind_cardinal_direction || ''}${gust} ` +
+             `<span style="color:#9aa0a6">— ${name}</span>`;
     }
     function popupTable(rows) {
       return '<table>' + rows.map(([k, v]) =>
@@ -381,6 +407,45 @@
         document.getElementById('meta').insertAdjacentHTML('beforeend',
           `<br/><b style="color:#f77">Wind layer failed: ${err}</b>`);
       });
+
+    // --- 1b. RAWS observed wind (what anemometers actually recorded) ---
+    // HRRR above is a forecast; these are observations. Left OFF by default —
+    // 4,000+ stations would bury every other layer — but always loaded so the
+    // hover panel can report the nearest reading against the forecast.
+    fetch('data/raws.geojson')
+      .then(r => r.json())
+      .then(gj => {
+        HOVER.raws = gj;
+        const gustColor = g =>
+          g == null ? '#8899aa' :
+          g >= 40 ? '#ff3300' :
+          g >= 30 ? '#ff9c33' :
+          g >= 20 ? '#ffd24d' :
+          g >= 10 ? '#6bd36b' : '#4c9be8';
+        const layer = L.geoJSON(gj, {
+          pointToLayer: (feat, latlng) => L.circleMarker(latlng, {
+            radius: 3.5, weight: 0.8, color: '#0b0e13',
+            fillColor: gustColor(feat.properties.wind_gust_mph), fillOpacity: 0.9,
+          }),
+          onEachFeature: (feat, lyr) => {
+            const p = feat.properties;
+            const n = (v, u) => v == null ? '—' : `${v} ${u}`;
+            lyr.bindPopup(popupTable([
+              ['Station', `<b>${p.station_name || p.station_id || 'Unnamed'}</b>`],
+              ['Wind', `${n(p.wind_speed_mph, 'mph')} ${p.wind_cardinal_direction || ''}`],
+              ['Gust', n(p.wind_gust_mph, 'mph')],
+              ['Peak', n(p.peak_wind_speed_mph, 'mph')],
+              ['Humidity', n(p.relative_humidity_pct, '%')],
+              ['Temp', n(p.air_temp_f, '°F')],
+              ['Observed', fmtDate(p.last_updated)],
+            ]));
+          },
+        });
+        // Deliberately not addTo(map) — opt-in via the layer control.
+        overlays[`RAWS observed wind (${gj.features.length} stations — off by default)`] = layer;
+        rebuildLayerControl();
+      })
+      .catch(err => console.warn('RAWS failed:', err));
 
     // --- 2. Outages ---
     function outageStyle(feat) {
@@ -700,6 +765,9 @@
       if (live(m.wind))
         lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}${cachedNote(m.wind)}`);
       else lines.push(`<b>Wind:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.raws))
+        lines.push(`<b>RAWS observed:</b> ${m.raws.stations} stations, peak gust ${m.raws.max_gust_mph} mph${cachedNote(m.raws)}`);
+      else lines.push(`<b>RAWS observed:</b> <span style="color:#f77">failed</span>`);
       if (live(m.outages))
         lines.push(`<b>Outages:</b> ${m.outages.outage_points} points, ${m.outages.outage_areas} areas (PG&amp;E/SCE/SDG&amp;E/SMUD)${cachedNote(m.outages)}`);
       else lines.push(`<b>Outages:</b> <span style="color:#f77">failed</span>`);
@@ -814,8 +882,9 @@
         hp.wind.innerHTML =
           `<b>${w.speed_mph.toFixed(1)} mph</b> ${compass} ` +
           `<span class="arrow" style="transform:rotate(${goingDeg}deg)" title="wind going ${Math.round(goingDeg)}°">↑</span>` +
-          ` <span class="pill" title="U/V components in m/s">${w.u.toFixed(1)},${w.v.toFixed(1)}</span>`;
-      } else hp.wind.innerHTML = NONE;
+          ` <span class="pill" title="U/V components in m/s">${w.u.toFixed(1)},${w.v.toFixed(1)}</span>` +
+          nearestRawsHtml(latlng);
+      } else hp.wind.innerHTML = NONE + nearestRawsHtml(latlng);
 
       // NWS alerts
       const alerts = pipFeatures(HOVER.alerts, pt);

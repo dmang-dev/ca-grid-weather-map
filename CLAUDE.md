@@ -66,8 +66,18 @@ mobile/                 Capacitor wrapper for Android/iOS
 
 ## Pitfalls
 
-- HRRR is forecast wind, not observed wind. RTMA would be observed (at
-  the cost of more complex GRIB processing).
+- **HRRR is forecast wind, not observed.** `fetch_raws()` adds the
+  observed side: ~4,200 RAWS stations from the same CAL FIRE ArcGIS org
+  as FIRIS, refreshed within the hour, with gusts, RH and temperature.
+  It's point data, not a field — the hover panel reports the nearest
+  station within 25 km beside the HRRR value, and the layer is **off by
+  default** because 4,000 markers bury everything else. A gridded
+  observed field would still mean RTMA and more GRIB processing.
+- **ArcGIS can truncate without saying so.** RAWS holds 4,208 records
+  and returns exactly 2,000 with `exceededTransferLimit` *absent* —
+  the flag only shows up on page 2. Anything that might exceed
+  `maxRecordCount` must go through `arcgis_query_all()`, which pages
+  with `resultOffset`. Don't trust the flag to warn you.
 - **WFIGS perimeters lag; FIRIS doesn't.** WFIGS only has a polygon
   once someone ground-maps the fire and a GIS specialist uploads it — a
   day or more, worst on CAL FIRE state incidents. California's own

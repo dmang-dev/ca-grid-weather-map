@@ -9,7 +9,8 @@ workflow regenerates these every 2 hours.
 
 | File | Source | Refreshed by |
 |---|---|---|
-| `wind.json` | NOAA HRRR 10m U/V via AWS S3 | `fetch_wind()` |
+| `wind.json` | NOAA HRRR 10m U/V via AWS S3 (forecast) | `fetch_wind()` |
+| `raws.geojson` | RAWS station observations — wind, gusts, RH, temp (observed) | `fetch_raws()` |
 | `outage_points.geojson` | California OES point layer (PG&E/SCE/SDG&E/SMUD) | `fetch_outages()` |
 | `outage_areas.geojson` | California OES polygon layer (same query; upstream only publishes PG&E here) | `fetch_outages()` |
 | `psps.geojson` | CPUC PSPS event history (365 days) | `fetch_psps()` |
