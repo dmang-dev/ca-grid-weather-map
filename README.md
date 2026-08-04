@@ -223,6 +223,14 @@ Built to WCAG 2.1 AA targets:
 Each fetcher is failure-isolated — if a new source breaks, the others still
 populate.
 
+## Status
+
+Live and auto-refreshing. The GitHub Pages deploy regenerates `data/`
+every 2 hours via the `refresh-data.yml` workflow; the local-clone path
+refreshes on demand via the UI button. Open follow-ups are tracked in
+[GitHub Issues](https://github.com/dmang-dev/ca-grid-weather-map/issues).
+Honest known gaps are listed under **Limitations** above.
+
 ## License
 
 [MIT](LICENSE). Have fun.
