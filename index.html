@@ -514,7 +514,7 @@
               ['Size', `${acres} acres`],
               ['Contained', cont],
               ['Cause', p.attr_FireCause || '—'],
-              ['Discovered', fmtDate(Date.parse(p.attr_FireDiscoveryDateTime))],
+              ['Discovered', fmtDate(p.attr_FireDiscoveryDateTime)],
               ['County', p.attr_POOCounty || '—'],
               ['Perimeter updated', fmtDate(p.poly_DateCurrent)],
             ]));
@@ -620,25 +620,39 @@
       } else {
         lines.push(`<b>Generated:</b> ${new Date(m.generated_at).toLocaleString()} (${ageStr})`);
       }
-      if (m.wind?.status === 'ok')
-        lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}`);
+      // A fetcher whose upstream was down leaves the previous snapshot in
+      // place and reports "stale" — the layer is still on the map, just not
+      // current, so it gets an amber note instead of a red "failed".
+      const live = (e) => e?.status === 'ok' || e?.status === 'stale';
+      const cachedNote = (e) => {
+        if (e?.status !== 'stale') return '';
+        const h = (Date.now() - Date.parse(e.as_of)) / 3.6e6;
+        const age = isFinite(h)
+          ? (h < 1 ? `${Math.round(h * 60)} min` : `${h.toFixed(1)} h`) + ' old'
+          : 'from an earlier run';
+        return ` <span style="color:#ffb84d">(cached, ${age} — upstream unavailable)</span>`;
+      };
+      if (live(m.wind))
+        lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}${cachedNote(m.wind)}`);
       else lines.push(`<b>Wind:</b> <span style="color:#f77">failed</span>`);
-      if (m.outages?.status === 'ok')
-        lines.push(`<b>Outages:</b> ${m.outages.outage_points} points, ${m.outages.outage_areas} areas (PG&amp;E/SCE/SDG&amp;E/SMUD)`);
+      if (live(m.outages))
+        lines.push(`<b>Outages:</b> ${m.outages.outage_points} points, ${m.outages.outage_areas} areas (PG&amp;E/SCE/SDG&amp;E/SMUD)${cachedNote(m.outages)}`);
       else lines.push(`<b>Outages:</b> <span style="color:#f77">failed</span>`);
-      if (m.psps?.status === 'ok')
-        lines.push(`<b>PSPS:</b> ${m.psps.events_total} events (last ${m.psps.lookback_days}d), ${m.psps.events_active} active`);
+      if (live(m.psps))
+        lines.push(`<b>PSPS:</b> ${m.psps.events_total} events (last ${m.psps.lookback_days}d), ${m.psps.events_active} active${cachedNote(m.psps)}`);
       else lines.push(`<b>PSPS:</b> <span style="color:#f77">failed</span>`);
-      if (m.alerts?.status === 'ok') {
+      if (live(m.alerts)) {
         const by = m.alerts.by_event || {};
         const parts = Object.entries(by).map(([k, v]) => `${v} ${k}`);
-        lines.push(`<b>NWS alerts:</b> ${m.alerts.alerts_total}${parts.length ? ' — ' + parts.join(', ') : ''}`);
+        lines.push(`<b>NWS alerts:</b> ${m.alerts.alerts_total}${parts.length ? ' — ' + parts.join(', ') : ''}${cachedNote(m.alerts)}`);
       } else lines.push(`<b>NWS alerts:</b> <span style="color:#f77">failed</span>`);
-      if (m.fires?.status === 'ok')
-        lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)`);
-      else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
-      if (m.inciweb?.status === 'ok')
-        lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}`);
+      if (live(m.fires)) {
+        // Living Atlas is the failover mirror for NIFC's WFIGS service.
+        const src = m.fires.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
+        lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)${src}${cachedNote(m.fires)}`);
+      } else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.inciweb))
+        lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
       document.getElementById('meta').innerHTML = lines.join('<br/>');
     }).catch(() => {

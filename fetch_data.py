@@ -50,6 +50,67 @@ DATA_DIR.mkdir(exist_ok=True)
 
 
 # =============================================================================
+# ArcGIS query helper — the 200-with-an-error-body trap
+# =============================================================================
+# Every public ArcGIS Online layer we read (NIFC, CA OES, CPUC, CEC) reports
+# rate limiting as HTTP 200 with an {"error": {"code": 429, ...}} body, so
+# raise_for_status() sails straight past it. Those quotas are org-wide and
+# shared with every other consumer on the internet, so a 429 says nothing about
+# our request being wrong — it is transient, and worth retrying.
+ARCGIS_TRANSIENT_CODES = {429, 500, 502, 503, 504}
+
+
+class ArcGISError(RuntimeError):
+    """An ArcGIS REST error, whether it arrived as an HTTP status or a JSON body."""
+
+    def __init__(self, message: str, code=None, transient: bool = False):
+        super().__init__(message)
+        self.code = code
+        self.transient = transient
+
+
+def arcgis_query(url: str, params: dict, *, what: str, timeout: int = 60,
+                 attempts: int = 3, max_sleep: float = 20.0) -> dict:
+    """GET an ArcGIS FeatureServer query and return the parsed GeoJSON.
+
+    Retries transient failures (connection errors, 5xx, quota 429s) with capped
+    backoff. The cap is deliberately well under the 60 s ArcGIS quota window:
+    a caller with a mirror is better off failing over than waiting it out.
+    """
+    exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = HTTP.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            gj = r.json()
+            err = gj.get("error") if isinstance(gj, dict) else None
+            if err:
+                code = err.get("code")
+                detail = "; ".join(err.get("details") or []) or err.get("message") or ""
+                raise ArcGISError(f"{what}: ArcGIS error {code}: {detail}",
+                                  code=code, transient=code in ARCGIS_TRANSIENT_CODES)
+            if not isinstance(gj, dict) or "features" not in gj:
+                raise ArcGISError(f"{what}: no 'features' in response: {str(gj)[:200]}")
+            if gj.get("exceededTransferLimit"):
+                # Not fatal — but the counts we report would be short, so say so
+                # rather than letting a truncated layer look complete.
+                print(f"  [{what}] WARNING: hit the server's max record count; "
+                      f"result truncated at {len(gj['features'])} features")
+            return gj
+        except ArcGISError as e:
+            transient, exc = e.transient, e
+        except (requests.RequestException, ValueError) as e:
+            # ValueError covers JSONDecodeError — usually an HTML error page.
+            transient, exc = True, e
+        if not transient or attempt == attempts:
+            raise exc
+        delay = min(max_sleep, 5.0 * 2 ** (attempt - 1))
+        print(f"  [{what}] transient failure, retrying in {delay:.0f}s: {exc}")
+        time.sleep(delay)
+    raise exc  # unreachable; keeps type checkers happy
+
+
+# =============================================================================
 # 1. HRRR wind
 # =============================================================================
 def fetch_wind() -> dict:
@@ -196,12 +257,7 @@ def fetch_outages() -> dict:
             "outSR": 4326,
             "f": "geojson",
         }
-        r = HTTP.get(url, params=params, timeout=60)
-        r.raise_for_status()
-        gj = r.json()
-        # ArcGIS sometimes returns {"error": ...} with 200; sanity check.
-        if "features" not in gj:
-            raise RuntimeError(f"Bad response from OES layer {layer_id}: {gj!r}")
+        gj = arcgis_query(url, params, what=f"OES layer {layer_id}")
         (DATA_DIR / f"{name}.geojson").write_text(json.dumps(gj))
         summary[name] = len(gj["features"])
     return summary
@@ -226,11 +282,7 @@ def fetch_psps() -> dict:
         "outSR": 4326,
         "f": "geojson",
     }
-    r = HTTP.get(f"{PSPS_BASE}/query", params=params, timeout=60)
-    r.raise_for_status()
-    gj = r.json()
-    if "features" not in gj:
-        raise RuntimeError(f"Bad PSPS response: {gj!r}")
+    gj = arcgis_query(f"{PSPS_BASE}/query", params, what="PSPS")
 
     # Tag each feature with active/historical based on FullRestorationDate.
     now_ms = int(time.time() * 1000)
@@ -272,11 +324,14 @@ def _get_ca_boundary():
     from shapely.geometry import shape
     if not CA_BOUNDARY_FILE.exists():
         print("  fetching CA state boundary (one-time)...")
-        r = HTTP.get(CA_BOUNDARY_URL, params={
+        # Validate before writing: caching a rate-limit error body here would
+        # poison this one-time file permanently.
+        gj = arcgis_query(CA_BOUNDARY_URL, {
             "where": "1=1", "outFields": "State", "outSR": 4326, "f": "geojson",
-        }, timeout=60)
-        r.raise_for_status()
-        CA_BOUNDARY_FILE.write_text(r.text)
+        }, what="CA boundary")
+        if not gj["features"]:
+            raise RuntimeError("CA boundary query returned no features")
+        CA_BOUNDARY_FILE.write_text(json.dumps(gj))
     gj = json.loads(CA_BOUNDARY_FILE.read_text())
     return shape(gj["features"][0]["geometry"])
 ALERT_EVENTS = {
@@ -410,26 +465,114 @@ def fetch_alerts() -> dict:
 FIRES_URL = ("https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/"
              "WFIGS_Interagency_Perimeters_Current/FeatureServer/0/query")
 
+# NIFC's own service is the busiest wildfire layer on ArcGIS Online and spends
+# real stretches of fire season over its per-minute quota (HTTP 200, body says
+# 429). Esri's Living Atlas republishes the same NIFC feed from a different
+# org — different quota — so it stays up when the origin is throttled.
+# Layer 1 = perimeters (geometry), layer 0 = incident points (the containment,
+# cause, and county attributes that WFIGS bundles into one layer).
+FIRES_MIRROR_BASE = ("https://services9.arcgis.com/RHVPKKiFTONKtxq3/arcgis/rest/services/"
+                     "USA_Wildfires_v1/FeatureServer")
+# The mirror's perimeter layer has no state field, so California is selected by
+# envelope. Tight to the state — not PGE_BBOX, which is padded far out to sea
+# and into Nevada for the wind grid.
+CA_ENVELOPE = "-124.6,32.4,-114.0,42.1"
+# ONCC/OSCC are the two California geographic area coordination centers, used
+# to keep CA perimeters whose IRWIN id doesn't join to an incident point.
+CA_GACCS = {"ONCC", "OSCC"}
 
-def fetch_fires() -> dict:
-    params = {
+
+def _irwin(value) -> str:
+    """Normalize an IRWIN id — the mirror's two layers disagree on braces/case."""
+    return (value or "").strip("{}").lower()
+
+
+def _fires_from_wfigs() -> dict:
+    return arcgis_query(FIRES_URL, {
         "where": "attr_POOState='US-CA'",
         "outFields": ("poly_IncidentName,poly_GISAcres,poly_DateCurrent,"
                       "attr_IncidentName,attr_PercentContained,attr_FireDiscoveryDateTime,"
                       "attr_FireCause,attr_IncidentTypeCategory,attr_POOCounty"),
         "outSR": 4326,
         "f": "geojson",
-    }
-    r = HTTP.get(FIRES_URL, params=params, timeout=60)
-    r.raise_for_status()
-    gj = r.json()
-    if "features" not in gj:
-        raise RuntimeError(f"Fires fetch failed: {gj!r}")
+    }, what="fires (WFIGS)")
+
+
+def _fires_from_mirror() -> dict:
+    """Rebuild the WFIGS feature schema from the Living Atlas republication.
+
+    Emits the same poly_*/attr_* property names the frontend already reads, so
+    a failover is invisible to the map.
+    """
+    perims = arcgis_query(f"{FIRES_MIRROR_BASE}/1/query", {
+        "where": "1=1",
+        "geometry": CA_ENVELOPE,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": 4326,
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "IncidentName,GISAcres,DateCurrent,IncidentTypeCategory,IRWINID,GACC",
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="fires mirror (perimeters)")
+
+    # Best-effort attribute join: perimeters with thin popups still beat no
+    # wildfire layer at all.
+    attrs: dict[str, dict] = {}
+    try:
+        pts = arcgis_query(f"{FIRES_MIRROR_BASE}/0/query", {
+            "where": "POOState='US-CA'",
+            "outFields": ("IrwinID,IncidentName,PercentContained,FireCause,"
+                          "FireDiscoveryDateTime,POOCounty,IncidentTypeCategory"),
+            "outSR": 4326,
+            "f": "geojson",
+        }, what="fires mirror (incidents)")
+        attrs = {_irwin(f["properties"].get("IrwinID")): f["properties"]
+                 for f in pts["features"] if _irwin(f["properties"].get("IrwinID"))}
+    except Exception as e:
+        print(f"  [fires] mirror incident points unavailable, perimeters only: {e}")
+
+    out = []
+    for f in perims["features"]:
+        p = f["properties"]
+        a = attrs.get(_irwin(p.get("IRWINID"))) or {}
+        # The envelope is a rectangle, so it also catches Nevada and Arizona.
+        # An incident-point match means POOState='US-CA'; without one, fall back
+        # to the California coordination centers.
+        if not a and p.get("GACC") not in CA_GACCS:
+            continue
+        out.append({
+            "type": "Feature",
+            "geometry": f.get("geometry"),
+            "properties": {
+                "poly_IncidentName": p.get("IncidentName"),
+                "poly_GISAcres": p.get("GISAcres"),
+                "poly_DateCurrent": p.get("DateCurrent"),
+                "attr_IncidentName": a.get("IncidentName") or p.get("IncidentName"),
+                "attr_PercentContained": a.get("PercentContained"),
+                "attr_FireDiscoveryDateTime": a.get("FireDiscoveryDateTime"),
+                "attr_FireCause": a.get("FireCause"),
+                "attr_IncidentTypeCategory": (a.get("IncidentTypeCategory")
+                                              or p.get("IncidentTypeCategory")),
+                "attr_POOCounty": a.get("POOCounty"),
+            },
+        })
+    return {"type": "FeatureCollection", "features": out}
+
+
+def fetch_fires() -> dict:
+    try:
+        gj = _fires_from_wfigs()
+        source = "wfigs"
+    except Exception as e:
+        print(f"  [fires] WFIGS unavailable ({e}) — failing over to Living Atlas mirror")
+        gj = _fires_from_mirror()
+        source = "living_atlas"
     (DATA_DIR / "wildfires.geojson").write_text(json.dumps(gj))
     total_acres = sum(f["properties"].get("poly_GISAcres") or 0 for f in gj["features"])
     return {
         "fires": len(gj["features"]),
         "total_acres": round(total_acres, 0),
+        "source": source,
     }
 
 
@@ -455,11 +598,7 @@ def fetch_inciweb() -> dict:
         "outSR": 4326,
         "f": "geojson",
     }
-    r = HTTP.get(INCIWEB_URL, params=params, timeout=30)
-    r.raise_for_status()
-    gj = r.json()
-    if "features" not in gj:
-        raise RuntimeError(f"InciWeb fetch failed: {gj!r}")
+    gj = arcgis_query(INCIWEB_URL, params, what="InciWeb", timeout=30)
     (DATA_DIR / "inciweb.geojson").write_text(json.dumps(gj))
     return {"incidents": len(gj["features"])}
 
@@ -475,11 +614,7 @@ COUNTIES_URL = (
 
 def fetch_counties() -> dict:
     params = {"where": "1=1", "outFields": "NAME", "outSR": 4326, "f": "geojson"}
-    r = HTTP.get(COUNTIES_URL, params=params, timeout=60)
-    r.raise_for_status()
-    gj = r.json()
-    if "features" not in gj:
-        raise RuntimeError(f"Counties fetch failed: {gj!r}")
+    gj = arcgis_query(COUNTIES_URL, params, what="counties")
     (DATA_DIR / "ca_counties.geojson").write_text(json.dumps(gj))
     return {"counties": len(gj["features"])}
 
@@ -498,11 +633,9 @@ def fetch_territory() -> dict:
         "outSR": 4326,
         "f": "geojson",
     }
-    r = HTTP.get(f"{TERRITORY_BASE}/query", params=params, timeout=60)
-    r.raise_for_status()
-    gj = r.json()
-    if "features" not in gj or not gj["features"]:
-        raise RuntimeError(f"CEC utility territories not found: {gj!r}")
+    gj = arcgis_query(f"{TERRITORY_BASE}/query", params, what="territory")
+    if not gj["features"]:
+        raise RuntimeError("CEC utility territories query returned no features")
     # Filename kept for back-compat with the existing HTML fetch path.
     (DATA_DIR / "pge_territory.geojson").write_text(json.dumps(gj))
     # Strip whitespace from acronyms — CEC data has trailing spaces sometimes.
@@ -520,7 +653,15 @@ def fetch_territory() -> dict:
 # =============================================================================
 # Driver
 # =============================================================================
-def run_one(name: str, fn) -> dict:
+def _previous_manifest() -> dict:
+    """Last run's manifest, so a failed fetcher can carry its counts forward."""
+    try:
+        return json.loads((DATA_DIR / "manifest.json").read_text())
+    except Exception:
+        return {}
+
+
+def run_one(name: str, fn, prev: dict | None = None, cache_file: str | None = None) -> dict:
     print(f"\n[{name}] fetching ...")
     t0 = time.time()
     try:
@@ -531,20 +672,36 @@ def run_one(name: str, fn) -> dict:
     except Exception as e:
         print(f"[{name}] FAILED: {e}")
         traceback.print_exc()
+        # A dead upstream doesn't invalidate what's already on disk — nothing
+        # overwrote it, so the map still draws the previous snapshot. Report
+        # that as stale (with the age of the data) rather than as a bare
+        # failure, which reads as "this layer is missing" when it isn't.
+        before = (prev or {}).get(name) or {}
+        if cache_file and (DATA_DIR / cache_file).exists() and before.get("status") in ("ok", "stale"):
+            carried = {k: v for k, v in before.items()
+                       if k not in ("status", "duration_s", "error", "as_of")}
+            print(f"[{name}] serving last-good snapshot as stale")
+            return {
+                **carried,
+                "status": "stale",
+                "error": repr(e),
+                "as_of": before.get("as_of") or (prev or {}).get("generated_at"),
+            }
         return {"status": "error", "error": repr(e)}
 
 
 def main() -> int:
+    prev = _previous_manifest()
     results = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "wind": run_one("wind", fetch_wind),
-        "outages": run_one("outages", fetch_outages),
-        "psps": run_one("psps", fetch_psps),
-        "alerts": run_one("alerts", fetch_alerts),
-        "territory": run_one("territory", fetch_territory),
-        "counties": run_one("counties", fetch_counties),
-        "fires": run_one("fires", fetch_fires),
-        "inciweb": run_one("inciweb", fetch_inciweb),
+        "wind": run_one("wind", fetch_wind, prev, "wind.json"),
+        "outages": run_one("outages", fetch_outages, prev, "outage_points.geojson"),
+        "psps": run_one("psps", fetch_psps, prev, "psps.geojson"),
+        "alerts": run_one("alerts", fetch_alerts, prev, "nws_alerts.geojson"),
+        "territory": run_one("territory", fetch_territory, prev, "pge_territory.geojson"),
+        "counties": run_one("counties", fetch_counties, prev, "ca_counties.geojson"),
+        "fires": run_one("fires", fetch_fires, prev, "wildfires.geojson"),
+        "inciweb": run_one("inciweb", fetch_inciweb, prev, "inciweb.geojson"),
     }
     (DATA_DIR / "manifest.json").write_text(json.dumps(results, indent=2))
     print("\nmanifest:")
