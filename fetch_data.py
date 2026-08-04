@@ -534,6 +534,47 @@ def _iso_to_ms(value):
         return None
 
 
+def _fire_keys(name) -> list[str]:
+    """Match keys for a fire name, most specific first.
+
+    FIRIS names a complex's sub-fires "CINDERCOMPLEX-5-3" where WFIGS calls the
+    same fire "5-3", so a complex-prefixed name also answers to its sub-
+    designation. That alias can be as short as "53", which is far too generic
+    to trust on its own — callers must confirm alias hits geometrically.
+    """
+    base = _fire_key(name)
+    keys = [base] if base else []
+    head, sep, tail = (name or "").upper().strip().partition("-")
+    if sep and head.replace(" ", "").endswith("COMPLEX"):
+        alias = _fire_key(tail)
+        if alias and alias not in keys:
+            keys.append(alias)
+    return keys
+
+
+def _geom_center(geometry) -> tuple[float, float] | None:
+    """Rough (lat, lon) centre of any GeoJSON geometry, for sanity checks."""
+    if not geometry:
+        return None
+    lons: list[float] = []
+    lats: list[float] = []
+
+    def walk(c):
+        if isinstance(c, (int, float)):
+            return
+        if len(c) >= 2 and isinstance(c[0], (int, float)) and isinstance(c[1], (int, float)):
+            lons.append(c[0])
+            lats.append(c[1])
+            return
+        for part in c:
+            walk(part)
+
+    walk(geometry.get("coordinates") or [])
+    if not lons:
+        return None
+    return ((min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2)
+
+
 def _km_apart(lat1, lon1, lat2, lon2) -> float:
     """Rough great-circle distance in km — fine at the scale we compare at."""
     return math.hypot((lat1 - lat2) * 111.0,
@@ -904,9 +945,9 @@ def fetch_fire_points() -> dict:
                   for f in perims["features"]} - {""}
         # FIRIS perimeters carry no IRWIN id at all, so they need a name path
         # or every FIRIS-only fire would still claim to have no perimeter.
-        mapped_names = {_fire_key(f["properties"].get("attr_IncidentName")
-                                  or f["properties"].get("poly_IncidentName"))
-                        for f in perims["features"]} - {""}
+        mapped_names = {k for f in perims["features"]
+                        for k in _fire_keys(f["properties"].get("attr_IncidentName")
+                                            or f["properties"].get("poly_IncidentName"))} - {""}
     except Exception as e:
         # Fail toward visibility: without the cross-reference every point is
         # treated as unmapped, which over-draws rather than hiding a fire.
@@ -928,7 +969,7 @@ def fetch_fire_points() -> dict:
     # This runs here rather than in fetch_fires() because the dependency goes
     # both ways: points need the perimeters to set _has_perimeter, so the
     # perimeter file already exists by the time we get here.
-    perims_enriched = _backfill_perimeter_attrs(gj["features"])
+    perims_enriched, perims_aliased = _backfill_perimeter_attrs(gj["features"])
 
     return {
         "incidents": len(gj["features"]),
@@ -937,6 +978,7 @@ def fetch_fire_points() -> dict:
         "calfire_enriched": enriched,
         "calfire_only": appended,
         "perimeters_enriched": perims_enriched,
+        "perimeters_via_alias": perims_aliased,
     }
 
 
@@ -960,18 +1002,34 @@ def _backfill_perimeter_attrs(points: list[dict]) -> int:
         return 0
 
     by_key: dict[str, dict] = {}
-    for f in points:
-        key = _fire_key(f["properties"].get("IncidentName"))
-        # Prefer the point carrying the most detail if a name repeats.
-        if key and (key not in by_key
-                    or sum(v is not None for v in f["properties"].values())
-                    > sum(v is not None for v in by_key[key].values())):
-            by_key[key] = f["properties"]
+    for pt in points:
+        detail = sum(v is not None for v in pt["properties"].values())
+        for key in _fire_keys(pt["properties"].get("IncidentName")):
+            # Prefer the point carrying the most detail if a name repeats.
+            prev = by_key.get(key)
+            if prev is None or detail > sum(v is not None for v in prev["properties"].values()):
+                by_key[key] = pt
 
-    filled = 0
+    filled = aliased = 0
     for f in perims["features"]:
         p = f["properties"]
-        src = by_key.get(_fire_key(p.get("attr_IncidentName") or p.get("poly_IncidentName")))
+        centre = _geom_center(f.get("geometry"))
+        src = None
+        for i, key in enumerate(_fire_keys(p.get("attr_IncidentName")
+                                           or p.get("poly_IncidentName"))):
+            cand = by_key.get(key)
+            if not cand:
+                continue
+            # The alias is a bare sub-designation like "53" — confirm it lands
+            # on the same fire before trusting it. Generous radius: an origin
+            # point can sit well outside a grown perimeter.
+            if i > 0:
+                cc = _geom_center(cand.get("geometry"))
+                if not centre or not cc or _km_apart(*centre, *cc) > 40:
+                    continue
+                aliased += 1
+            src = cand["properties"]
+            break
         if not src:
             continue
         touched = False
@@ -991,7 +1049,9 @@ def _backfill_perimeter_attrs(points: list[dict]) -> int:
             filled += 1
 
     path.write_text(json.dumps(perims))
-    return filled
+    if aliased:
+        print(f"  [fire points] {aliased} perimeter(s) matched via complex-name alias")
+    return filled, aliased
 
 
 # =============================================================================

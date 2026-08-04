@@ -98,6 +98,13 @@ mobile/                 Capacitor wrapper for Android/iOS
   points need the perimeter file to set `_has_perimeter`, so it must
   already be written. Expect partial coverage — perimeters older than
   the WFIGS "Current" points feed have no point left to join to.
+- **Fire names don't agree across sources.** `_fire_keys()` returns
+  several candidates per name: CAL FIRE's "Gann Fire" and WFIGS's
+  "GANN" normalize together, and FIRIS's complex naming
+  ("CINDERCOMPLEX-5-3") also answers to its sub-designation ("5-3"),
+  which is what WFIGS calls it. That alias can be as short as `53`, so
+  **alias hits must be confirmed geometrically** (40 km) before they're
+  trusted — the primary key match doesn't need it, the alias does.
 - **A fire can still have no polygon anywhere.** Until the first IR
   flight, a fire exists only as a point. `fetch_fire_points()` covers
   that; `_has_perimeter: false` marks the ones no perimeter layer can
