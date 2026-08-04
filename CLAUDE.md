@@ -68,15 +68,22 @@ mobile/                 Capacitor wrapper for Android/iOS
 
 - HRRR is forecast wind, not observed wind. RTMA would be observed (at
   the cost of more complex GRIB processing).
-- **Perimeters lag the fire.** WFIGS only has a polygon once someone
-  flies or walks the fire and a GIS specialist uploads it — a day or
-  more, worst on CAL FIRE state-responsibility incidents, which don't
-  feed the national pipeline as promptly as federal ones. A
-  perimeter-only map shows *nothing* for those fires, which skews
-  against exactly the new, fast-moving ones that matter most.
-  `fetch_fire_points()` covers the gap with WFIGS incident points;
-  `_has_perimeter: false` marks the ones the perimeter layer can't
-  show.
+- **WFIGS perimeters lag; FIRIS doesn't.** WFIGS only has a polygon
+  once someone ground-maps the fire and a GIS specialist uploads it — a
+  day or more, worst on CAL FIRE state incidents. California's own
+  answer is FIRIS (Fire Integrated Real-Time Intelligence System):
+  state aircraft flying IR sensors that publish "heat perimeters"
+  within hours. That's what fire.ca.gov's incident maps actually draw,
+  which is why a fire can have a shape there and none here.
+  `_fires_from_firis()` unions that layer into `wildfires.geojson`.
+  Neither source contains the other — take the union, not one or the
+  other. FIRIS rows carry **no IRWIN id**, so cross-referencing them
+  falls back to normalized incident name; that's why
+  `fetch_fire_points()` checks both.
+- **A fire can still have no polygon anywhere.** Until the first IR
+  flight, a fire exists only as a point. `fetch_fire_points()` covers
+  that; `_has_perimeter: false` marks the ones no perimeter layer can
+  show, and the map draws those boldly.
 - **IRWIN acreage goes stale; CAL FIRE's doesn't.** WFIGS reports
   whatever IRWIN was last told, which on state incidents can be wildly
   behind — Grade sat at 0.1 acres against CAL FIRE's 689.

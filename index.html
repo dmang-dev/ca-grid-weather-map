@@ -518,6 +518,8 @@
               ['Discovered', fmtDate(p.attr_FireDiscoveryDateTime)],
               ['County', p.attr_POOCounty || '—'],
               ['Perimeter updated', fmtDate(p.poly_DateCurrent)],
+              // WFIGS ground-mapped, or a FIRIS/CAL FIRE infrared flight.
+              ['Mapped by', p._perimeter_source || 'WFIGS'],
             ]));
           },
         });
@@ -712,7 +714,9 @@
       if (live(m.fires)) {
         // Living Atlas is the failover mirror for NIFC's WFIGS service.
         const src = m.fires.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
-        lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)${src}${cachedNote(m.fires)}`);
+        // FIRIS = state IR flights; they map fires WFIGS has no polygon for.
+        const ir = m.fires.firis_added ? ` — ${m.fires.firis_added} from FIRIS/IR flights` : '';
+        lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)${src}${ir}${cachedNote(m.fires)}`);
       } else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
       if (live(m.fire_points)) {
         const src = m.fire_points.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';

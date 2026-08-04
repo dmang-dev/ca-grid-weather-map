@@ -590,6 +590,67 @@ def _fires_from_mirror() -> dict:
     return {"type": "FeatureCollection", "features": out}
 
 
+# CAL FIRE's own incident maps don't draw WFIGS perimeters — they draw this,
+# which is why a fire can show a polygon on fire.ca.gov and nothing here.
+# FIRIS is California's Fire Integrated Real-Time Intelligence System: state
+# aircraft flying IR sensors that produce "heat perimeters" within hours,
+# instead of waiting on the ground-mapping-and-upload cycle WFIGS depends on.
+# The layer blends FIRIS, CAL FIRE intel flights, NIFC/WFIGS, USFS, and county
+# sources, and carries several missions per fire — one row per flight.
+FIRIS_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/"
+             "services/CA_Perimeters_NIFC_FIRIS_public_view/FeatureServer/0/query")
+# Long enough to keep a fire whose last IR flight was a while ago, short enough
+# not to redraw the whole season.
+FIRIS_MAX_AGE_DAYS = 21
+
+
+def _fires_from_firis() -> list[dict]:
+    """Latest heat perimeter per incident, in the WFIGS feature schema."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=FIRIS_MAX_AGE_DAYS)
+    gj = arcgis_query(FIRIS_URL, {
+        "where": f"poly_DateCurrent >= TIMESTAMP '{cutoff.strftime('%Y-%m-%d %H:%M:%S')}'",
+        "outFields": ("incident_name,source,area_acres,NIFC_GISAcres,poly_DateCurrent,"
+                      "Percent_Contained,FireDiscoveryDate"),
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="fires (FIRIS)")
+
+    latest: dict[str, dict] = {}
+    for f in gj["features"]:
+        p = f["properties"]
+        key = _fire_key(p.get("incident_name"))
+        # The layer carries unnamed rows literally called "NONE".
+        if not key or key == "NONE" or not f.get("geometry"):
+            continue
+        prev = latest.get(key)
+        if prev is None or (p.get("poly_DateCurrent") or 0) > (prev["properties"].get("poly_DateCurrent") or 0):
+            latest[key] = f
+
+    out = []
+    for key, f in latest.items():
+        p = f["properties"]
+        out.append({
+            "type": "Feature",
+            "geometry": f["geometry"],
+            "properties": {
+                "poly_IncidentName": p.get("incident_name"),
+                "poly_GISAcres": p.get("area_acres") if p.get("area_acres") is not None
+                                 else p.get("NIFC_GISAcres"),
+                "poly_DateCurrent": p.get("poly_DateCurrent"),
+                "attr_IncidentName": p.get("incident_name"),
+                "attr_PercentContained": p.get("Percent_Contained"),
+                "attr_FireDiscoveryDateTime": p.get("FireDiscoveryDate"),
+                "attr_FireCause": None,
+                "attr_IncidentTypeCategory": "WF",
+                "attr_POOCounty": None,
+                "attr_IrwinID": None,
+                # Provenance, so the popup can say where the shape came from.
+                "_perimeter_source": p.get("source") or "FIRIS",
+            },
+        })
+    return out
+
+
 def fetch_fires() -> dict:
     try:
         gj = _fires_from_wfigs()
@@ -598,12 +659,41 @@ def fetch_fires() -> dict:
         print(f"  [fires] WFIGS unavailable ({e}) — failing over to Living Atlas mirror")
         gj = _fires_from_mirror()
         source = "living_atlas"
+    for f in gj["features"]:
+        f["properties"].setdefault("_perimeter_source", "WFIGS")
+
+    # Union in FIRIS. Neither source contains the other: FIRIS has fires WFIGS
+    # has no polygon for (Gann, Grade, Mines), and WFIGS has a few FIRIS lacks.
+    # Best-effort — a FIRIS outage must not cost us the WFIGS perimeters.
+    firis_added = firis_replaced = 0
+    try:
+        by_key = {_fire_key(f["properties"].get("attr_IncidentName")
+                            or f["properties"].get("poly_IncidentName")): f
+                  for f in gj["features"]}
+        for cand in _fires_from_firis():
+            key = _fire_key(cand["properties"]["attr_IncidentName"])
+            existing = by_key.get(key)
+            if existing is None:
+                gj["features"].append(cand)
+                by_key[key] = cand
+                firis_added += 1
+            elif (cand["properties"].get("poly_DateCurrent") or 0) > \
+                 (existing["properties"].get("poly_DateCurrent") or 0):
+                # Same fire, fresher flight — swap the geometry in place.
+                gj["features"][gj["features"].index(existing)] = cand
+                by_key[key] = cand
+                firis_replaced += 1
+    except Exception as e:
+        print(f"  [fires] FIRIS perimeters unavailable: {e}")
+
     (DATA_DIR / "wildfires.geojson").write_text(json.dumps(gj))
     total_acres = sum(f["properties"].get("poly_GISAcres") or 0 for f in gj["features"])
     return {
         "fires": len(gj["features"]),
         "total_acres": round(total_acres, 0),
         "source": source,
+        "firis_added": firis_added,
+        "firis_fresher": firis_replaced,
     }
 
 
@@ -782,10 +872,16 @@ def fetch_fire_points() -> dict:
     # Tag the points a perimeter already covers, so the map can play those down
     # and highlight the fires where the dot is the only thing there is to draw.
     mapped: set[str] = set()
+    mapped_names: set[str] = set()
     try:
         perims = json.loads((DATA_DIR / "wildfires.geojson").read_text())
         mapped = {_irwin(f["properties"].get("attr_IrwinID"))
                   for f in perims["features"]} - {""}
+        # FIRIS perimeters carry no IRWIN id at all, so they need a name path
+        # or every FIRIS-only fire would still claim to have no perimeter.
+        mapped_names = {_fire_key(f["properties"].get("attr_IncidentName")
+                                  or f["properties"].get("poly_IncidentName"))
+                        for f in perims["features"]} - {""}
     except Exception as e:
         # Fail toward visibility: without the cross-reference every point is
         # treated as unmapped, which over-draws rather than hiding a fire.
@@ -794,7 +890,8 @@ def fetch_fire_points() -> dict:
     unmapped = 0
     for f in gj["features"]:
         p = f["properties"]
-        p["_has_perimeter"] = _irwin(p.get("IrwinID")) in mapped
+        p["_has_perimeter"] = (_irwin(p.get("IrwinID")) in mapped
+                               or _fire_key(p.get("IncidentName")) in mapped_names)
         if not p["_has_perimeter"]:
             unmapped += 1
 
