@@ -636,12 +636,11 @@ def fetch_territory() -> dict:
     gj = arcgis_query(f"{TERRITORY_BASE}/query", params, what="territory")
     if not gj["features"]:
         raise RuntimeError("CEC utility territories query returned no features")
-    # Filename kept for back-compat with the existing HTML fetch path.
-    (DATA_DIR / "pge_territory.geojson").write_text(json.dumps(gj))
     # Strip whitespace from acronyms — CEC data has trailing spaces sometimes.
     for f in gj["features"]:
         a = f["properties"].get("Acronym") or ""
         f["properties"]["Acronym"] = a.strip()
+    # Filename kept for back-compat with the existing HTML fetch path.
     (DATA_DIR / "pge_territory.geojson").write_text(json.dumps(gj))
     return {
         "features": len(gj["features"]),
