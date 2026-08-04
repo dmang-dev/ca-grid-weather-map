@@ -592,15 +592,49 @@ FIRE_POINTS_URL = ("https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/se
                    "WFIGS_Incident_Locations_Current/FeatureServer/0/query")
 
 
-def fetch_fire_points() -> dict:
-    gj = arcgis_query(FIRE_POINTS_URL, {
+def _fire_points_from_wfigs() -> dict:
+    return arcgis_query(FIRE_POINTS_URL, {
         # WF excludes prescribed burns (RX), which aren't what this map is for.
         "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
         "outFields": ("IncidentName,IncidentSize,PercentContained,FireDiscoveryDateTime,"
                       "POOCounty,POOProtectingAgency,IrwinID,FireOutDateTime"),
         "outSR": 4326,
         "f": "geojson",
-    }, what="fire points")
+    }, what="fire points (WFIGS)")
+
+
+def _fire_points_from_mirror() -> dict:
+    """Same incidents from the Living Atlas layer 0, in the primary's schema."""
+    gj = arcgis_query(f"{FIRES_MIRROR_BASE}/0/query", {
+        "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
+        "outFields": ("IncidentName,DailyAcres,CalculatedAcres,PercentContained,"
+                      "FireDiscoveryDateTime,POOCounty,IrwinID,FireOutDateTime"),
+        "outSR": 4326,
+        "f": "geojson",
+    }, what="fire points mirror")
+
+    for f in gj["features"]:
+        p = f["properties"]
+        # DailyAcres is the current reported size. Deliberately NOT falling back
+        # to DiscoveryAcres, which is the size when the fire was first found —
+        # Gann reads 0.01 there against 3000 today, and size drives the marker
+        # radius. Better to report no size than a wrong one.
+        daily = p.pop("DailyAcres", None)
+        calc = p.pop("CalculatedAcres", None)
+        p["IncidentSize"] = daily if daily is not None else calc
+        # The mirror's point layer carries no protecting-agency field.
+        p["POOProtectingAgency"] = None
+    return gj
+
+
+def fetch_fire_points() -> dict:
+    try:
+        gj = _fire_points_from_wfigs()
+        source = "wfigs"
+    except Exception as e:
+        print(f"  [fire points] WFIGS unavailable ({e}) — failing over to Living Atlas mirror")
+        gj = _fire_points_from_mirror()
+        source = "living_atlas"
 
     # Tag the points a perimeter already covers, so the map can play those down
     # and highlight the fires where the dot is the only thing there is to draw.
@@ -622,7 +656,11 @@ def fetch_fire_points() -> dict:
             unmapped += 1
 
     (DATA_DIR / "fire_points.geojson").write_text(json.dumps(gj))
-    return {"incidents": len(gj["features"]), "without_perimeter": unmapped}
+    return {
+        "incidents": len(gj["features"]),
+        "without_perimeter": unmapped,
+        "source": source,
+    }
 
 
 # =============================================================================

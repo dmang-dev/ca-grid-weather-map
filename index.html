@@ -703,9 +703,10 @@
         const src = m.fires.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
         lines.push(`<b>Wildfires:</b> ${m.fires.fires} active (${(m.fires.total_acres || 0).toLocaleString()} acres)${src}${cachedNote(m.fires)}`);
       } else lines.push(`<b>Wildfires:</b> <span style="color:#f77">failed</span>`);
-      if (live(m.fire_points))
-        lines.push(`<b>Fire incidents:</b> ${m.fire_points.incidents}, ${m.fire_points.without_perimeter} with no perimeter mapped${cachedNote(m.fire_points)}`);
-      else lines.push(`<b>Fire incidents:</b> <span style="color:#f77">failed</span>`);
+      if (live(m.fire_points)) {
+        const src = m.fire_points.source === 'living_atlas' ? ' <span class="pill">mirror</span>' : '';
+        lines.push(`<b>Fire incidents:</b> ${m.fire_points.incidents}, ${m.fire_points.without_perimeter} with no perimeter mapped${src}${cachedNote(m.fire_points)}`);
+      } else lines.push(`<b>Fire incidents:</b> <span style="color:#f77">failed</span>`);
       if (live(m.inciweb))
         lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
