@@ -438,7 +438,9 @@
             lyr.bindPopup(popupTable([
               ['Station', `<b>${p.station_name || p.station_id || 'Unnamed'}</b>`],
               ['Wind', `${n(p.wind_speed_mph, 'mph')} ${p.wind_cardinal_direction || ''}`],
-              ['Gust', n(p.wind_gust_mph, 'mph')],
+              ['Gust', p._gust_rejected != null
+                ? `<span style="color:#9aa0a6">${p._gust_rejected} mph</span> <span class="pill">sensor rejected</span>`
+                : n(p.wind_gust_mph, 'mph')],
               ['Peak', n(p.peak_wind_speed_mph, 'mph')],
               ['Humidity', n(p.relative_humidity_pct, '%')],
               ['Temp', n(p.air_temp_f, '°F')],

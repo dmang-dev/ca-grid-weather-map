@@ -1,0 +1,73 @@
+name: Build and deploy site
+
+# Replaces refresh-data.yml. That workflow committed a regenerated data/ back
+# to main every two hours, which put ~1.3 GB of blobs a year into git history
+# (the repo was already at 459 MB / 576 data commits). This regenerates data/
+# straight into the Pages artifact instead, so nothing regenerable is stored in
+# history at all — the deployed site is still refreshed on the same cadence.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */2 * * *'   # every 2 hours, on the hour, UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let a slow HRRR run overlap the next tick, and never cancel a deploy
+# half-way — a partial Pages deploy is worse than a late one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch all data sources
+        env:
+          PYTHONUTF8: "1"
+        run: python fetch_data.py
+
+      - name: Show manifest
+        run: |
+          python -c "import json; print(json.dumps(json.load(open('data/manifest.json')), indent=2))"
+
+      # Fail the build if every fetcher died — fetch_data.py exits non-zero
+      # only in that case, so a partial outage still deploys with the layers
+      # that did work, which is the behaviour we want.
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

@@ -1071,6 +1071,19 @@ def _backfill_perimeter_attrs(points: list[dict]) -> int:
 # as the FIRIS perimeters, updated within the hour.
 RAWS_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/rest/"
             "services/RAWS_Wind_2D_Public_View/FeatureServer/0/query")
+# A gust has to bear some relation to the sustained wind. THERMALITO RIVER
+# OUTLET reported 109 mph against a 6 mph sustained wind — a broken anemometer,
+# but it set max_gust_mph for the whole state and painted its station red.
+# Both conditions must hold, so a real 20 mph gust on a calm day survives:
+# across 4,404 stations these thresholds reject exactly that one sensor.
+GUST_RATIO_LIMIT = 3.0
+GUST_ABS_FLOOR_MPH = 40.0
+
+
+def _gust_is_suspect(speed, gust) -> bool:
+    if gust is None or speed is None:
+        return False
+    return gust > GUST_ABS_FLOOR_MPH and (speed == 0 or gust > GUST_RATIO_LIMIT * speed)
 
 
 def fetch_raws() -> dict:
@@ -1098,11 +1111,26 @@ def fetch_raws() -> dict:
         kept.append(f)
     gj["features"] = kept
 
+    if not kept:
+        # 4,000+ stations always report; zero means the query broke, not calm.
+        raise RuntimeError("RAWS query returned no stations")
+
+    rejected = 0
+    for f in kept:
+        p = f["properties"]
+        if _gust_is_suspect(p.get("wind_speed_mph"), p.get("wind_gust_mph")):
+            # Keep the raw value so the popup can say why the gust is blank.
+            p["_gust_rejected"] = p["wind_gust_mph"]
+            p["wind_gust_mph"] = None
+            rejected += 1
+
     (DATA_DIR / "raws.geojson").write_text(json.dumps(gj))
-    speeds = [f["properties"].get("wind_gust_mph") or 0 for f in kept]
+    gusts = [f["properties"].get("wind_gust_mph") for f in kept
+             if f["properties"].get("wind_gust_mph") is not None]
     return {
         "stations": len(kept),
-        "max_gust_mph": round(max(speeds), 1) if speeds else None,
+        "max_gust_mph": round(max(gusts), 1) if gusts else None,
+        "gusts_rejected": rejected,
         "reporting_wind": sum(1 for f in kept
                               if f["properties"].get("wind_speed_mph") is not None),
     }
@@ -1187,6 +1215,27 @@ COUNTIES_URL = (
 def fetch_counties() -> dict:
     params = {"where": "1=1", "outFields": "NAME", "outSR": 4326, "f": "geojson"}
     gj = arcgis_query(COUNTIES_URL, params, what="counties")
+    if not gj["features"]:
+        # This has actually happened, repeatedly (2026-06-06, 06-13, 06-22,
+        # 06-30, 07-23): OES returns an empty set, we wrote an empty file and
+        # reported ok, and the county layer plus the hover panel's County row
+        # went blank statewide with nothing flagging it. California has 58
+        # counties; zero is always a broken query, never real.
+        raise RuntimeError("counties query returned no features")
+
+    # The same layer has also served every county twice (116 rows for 58).
+    seen: set[str] = set()
+    deduped = []
+    for f in gj["features"]:
+        name = (f["properties"].get("NAME") or "").strip().upper()
+        if name and name in seen:
+            continue
+        seen.add(name)
+        deduped.append(f)
+    if len(deduped) != len(gj["features"]):
+        print(f"  [counties] dropped {len(gj['features']) - len(deduped)} duplicate rows")
+    gj["features"] = deduped
+
     (DATA_DIR / "ca_counties.geojson").write_text(json.dumps(gj))
     return {"counties": len(gj["features"])}
 
