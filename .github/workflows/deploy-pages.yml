@@ -10,7 +10,11 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '0 */2 * * *'   # every 2 hours, on the hour, UTC
+    # Every 2 hours, deliberately NOT on the hour. GitHub delays or silently
+    # drops scheduled runs at peak times and :00 is the worst of them — the
+    # first two ticks after this workflow was created never fired at all.
+    # An odd minute gets picked up far more reliably.
+    - cron: '23 */2 * * *'
   workflow_dispatch:
 
 permissions:
