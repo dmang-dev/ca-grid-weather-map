@@ -795,7 +795,11 @@
     fetch('data/manifest.json').then(r => r.json()).then(m => {
       const lines = [];
       const ageHours = (Date.now() - Date.parse(m.generated_at)) / 3.6e6;
-      const stale = ageHours > 3;
+      // The deploy refreshes every 2 h, so data is routinely ~2 h old by
+      // design. A 3 h threshold left only an hour of slack and cried stale
+      // whenever GitHub's scheduler dropped a single tick — which it does.
+      // 4.5 h absorbs one missed run and still catches a genuine stall.
+      const stale = ageHours > 4.5;
       const ageStr = ageHours < 1
         ? `${Math.round(ageHours * 60)} min ago`
         : `${ageHours.toFixed(1)} hours ago`;
