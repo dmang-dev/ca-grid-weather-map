@@ -2,8 +2,8 @@
 
 Cached datasets fetched by `../fetch_data.py`. All files here are
 regenerated on demand — **safe to delete the whole directory; `fetch_data.py`
-will repopulate it.** In the GitHub Pages deploy, a scheduled Actions
-workflow regenerates these every 2 hours.
+will repopulate it.** In the GitHub Pages deploy, `deploy-pages.yml`
+regenerates these every 2 hours and publishes them with the site.
 
 ## Files
 
@@ -27,11 +27,12 @@ workflow regenerates these every 2 hours.
 
 ## Rules
 
-- **In git, on purpose.** Regenerable, but not gitignored: GitHub Pages
-  has no runtime, so the committed snapshot *is* what the hosted demo
-  serves. `refresh-data.yml` commits a fresh one every 2 hours. A dirty
-  `data/` diff after a local run is expected — commit it to update the
-  demo, or `git restore data/` to drop it.
+- **Not in git.** `deploy-pages.yml` regenerates this directory on the
+  runner and ships it inside the GitHub Pages artifact, so the hosted
+  demo refreshes every 2 hours without the output entering history.
+  (It used to be committed; 576 of those commits had taken the repo to
+  459 MB.) Everything here except this README is gitignored — run
+  `python fetch_data.py` to populate it locally.
 - **Failure-isolated.** Each fetcher writes its file independently; one
   broken upstream doesn't prevent the others from updating. A fetcher
   whose upstream is down leaves the previous file untouched, and

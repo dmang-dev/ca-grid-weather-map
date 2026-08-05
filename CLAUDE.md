@@ -41,7 +41,7 @@ index.html              Entire frontend, single file
 sw.js                   Service worker — PWA offline cache
 manifest.webmanifest    PWA install manifest
 icon.svg / icon-maskable.svg   PWA icons
-data/                   Cached upstream responses (committed — see below)
+data/                   Cached upstream responses (gitignored; built at deploy)
 mobile/                 Capacitor wrapper for Android/iOS
 ```
 
@@ -52,13 +52,12 @@ mobile/                 Capacitor wrapper for Android/iOS
   offline in Lighthouse before pushing.
 - **Desktop vs mobile.** Project root = desktop/PWA. `mobile/` =
   Capacitor app-store wrapper that points at the hosted PWA.
-- **`data/` is regenerable but committed.** Anything in there is
-  `fetch_data.py`'s output, so it's safe to delete and repopulate — but
-  it is deliberately *not* gitignored: GitHub Pages has no runtime, so
-  the committed snapshot *is* what the hosted demo serves.
-  `refresh-data.yml` regenerates and commits it every 2 hours. A dirty
-  `data/` diff after a local run is expected — commit it to update the
-  demo, or `git restore data/` to drop it.
+- **`data/` is regenerable and never committed.** Anything in there is
+  `fetch_data.py`'s output. `deploy-pages.yml` regenerates it on the
+  runner and ships it inside the Pages artifact, so the hosted demo
+  stays fresh without the output entering git history — committing it
+  every 2 hours had taken the repo to 459 MB. Run `python fetch_data.py`
+  to populate `data/` locally; only `data/README.md` is tracked.
 - **Fetchers are failure-isolated.** Each fetches one source and writes
   one file. A broken upstream must not prevent the others from updating.
 - **Frontend is single-file.** `index.html` carries all the JS/CSS. No

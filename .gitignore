@@ -4,9 +4,12 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Fetched data is committed for the GitHub Pages demo snapshot.
-# Re-run `python fetch_data.py` locally to refresh; the dirty diff is
-# expected (commit it to update the demo, or `git restore data/` to revert).
+# Fetched data is NOT committed. deploy-pages.yml regenerates it straight into
+# the Pages artifact, so the hosted demo stays fresh without 15 MB geojson
+# blobs landing in git history every two hours. Run `python fetch_data.py` to
+# populate data/ locally. The directory's README stays tracked.
+data/*
+!data/README.md
 
 # Logs and scratch
 *.log
