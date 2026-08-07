@@ -61,11 +61,33 @@ npx wrangler secret put GITHUB_TOKEN
 Paste the token at the prompt. It is write-only from then on — not readable
 from the dashboard, not in `wrangler.toml`, not in git.
 
-**4. Deploy**
+**4. One-time: make sure the account has a workers.dev subdomain**
+
+Open <https://dash.cloudflare.com/> → **Workers & Pages**. Visiting the landing
+page for the first time provisions the account's `*.workers.dev` subdomain.
+
+This is required even though this Worker sets `workers_dev = false` and has no
+public URL: Cloudflare's *schedules* API refuses to register cron triggers on
+an account without one, failing with
+
+```
+You need a workers.dev subdomain in order to proceed. [code: 10063]
+```
+
+The two settings are independent — the account has a subdomain, and each
+Worker chooses whether to publish to it. `workers_dev = false` means this one
+does not, so nothing here becomes publicly reachable.
+
+**5. Deploy**
 
 ```bash
 npx wrangler deploy
 ```
+
+A clean deploy ends with the cron schedule listed. If it says
+`No targets deployed` **and** reports a trigger error, the subdomain step above
+hasn't been done — the code uploads fine but the schedule silently doesn't
+register, so the Worker never runs.
 
 ## Verifying
 
