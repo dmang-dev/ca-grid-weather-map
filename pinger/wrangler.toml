@@ -8,6 +8,10 @@ compatibility_date = "2026-08-07"
 # registering a workers.dev subdomain is an account-wide decision that would
 # expose this (and every later Worker) at a public address for no benefit.
 workers_dev = false
+# Same reasoning for preview URLs — nothing here should be reachable over HTTP.
+# Stating it explicitly also stops Wrangler warning about the default on every
+# deploy.
+preview_urls = false
 
 # Every 30 minutes. The worker only dispatches when the published snapshot is
 # older than MAX_AGE_MINUTES, so a frequent check costs nothing and keeps the
