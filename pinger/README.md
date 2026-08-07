@@ -80,13 +80,20 @@ Each tick logs its decision:
 {"cron":"*/30 * * * *","action":"dispatched","ageMinutes":118,"maxAge":110,"status":204}
 ```
 
-The worker's URL is a **read-only** status endpoint — it reports what the next
-tick would do and deliberately cannot trigger a deploy, so the public URL is
-not a rebuild button:
+This is a **cron-only** Worker: `workers_dev = false` and no routes, so it has
+no public URL at all. Cloudflare invokes the schedule directly. (Wrangler 4
+refuses to deploy a route-less Worker unless that flag says so explicitly —
+answering "no" to its workers.dev prompt without it just errors out.)
+
+The `fetch` handler is still there as a read-only status view, reachable
+locally via `npx wrangler dev`:
 
 ```json
 {"ageMinutes":47,"maxAgeMinutes":110,"wouldDispatch":false,"tokenConfigured":true}
 ```
+
+It reports what the next tick would do and deliberately cannot trigger a
+deploy, so adding a route later wouldn't turn it into a rebuild button.
 
 To exercise the cron path locally without waiting:
 
