@@ -1,0 +1,21 @@
+name = "cagrid-deploy-pinger"
+main = "src/worker.js"
+compatibility_date = "2026-08-07"
+
+# Every 30 minutes. The worker only dispatches when the published snapshot is
+# older than MAX_AGE_MINUTES, so a frequent check costs nothing and keeps the
+# worst-case staleness near the 2-hour target rather than GitHub's ~3.
+[triggers]
+crons = ["*/30 * * * *"]
+
+[vars]
+REPO = "dmang-dev/ca-grid-weather-map"
+WORKFLOW = "deploy-pages.yml"
+REF = "main"
+MANIFEST_URL = "https://dmang.com/ca-grid-weather-map/data/manifest.json"
+# Slightly under 2h: the deploy takes a few minutes, so this triggers the next
+# rebuild just before the snapshot actually hits the 2-hour mark.
+MAX_AGE_MINUTES = "110"
+
+# GITHUB_TOKEN is a secret, never a var — set it with:
+#   npx wrangler secret put GITHUB_TOKEN

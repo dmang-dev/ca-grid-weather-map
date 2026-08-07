@@ -1,0 +1,16 @@
+{
+  "name": "cagrid-deploy-pinger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that rebuilds the map when GitHub's scheduler misses a tick",
+  "scripts": {
+    "status": "wrangler dev",
+    "test-cron": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "logs": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

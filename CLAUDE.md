@@ -43,6 +43,7 @@ manifest.webmanifest    PWA install manifest
 icon.svg / icon-maskable.svg   PWA icons
 data/                   Cached upstream responses (gitignored; built at deploy)
 mobile/                 Capacitor wrapper for Android/iOS
+pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
 ```
 
 ## Conventions
@@ -133,6 +134,14 @@ mobile/                 Capacitor wrapper for Android/iOS
 - Three CA utilities (LADWP, IID, PacifiCorp) don't publish to OES;
   their outage events will never appear no matter how robust the
   fetcher is.
+- **GitHub's `schedule` trigger is best-effort, and it shows.** Over one
+  39-hour sample `deploy-pages.yml` got 13 runs against an expected 20,
+  averaging ~3 h apart instead of 2, with a 6.25 h gap. Don't treat the
+  cron as a cadence guarantee — `pinger/` (a Cloudflare Worker) watches
+  the published manifest and dispatches a rebuild when it goes stale.
+  The workflow cron stays armed as a backstop; the worker checks the
+  manifest age first so the two schedulers don't queue duplicate deploys.
+  The UI's stale threshold (4.5 h) is set to tolerate one missed tick.
 - The hosted demo's refresh button is disabled because GitHub Pages
   can't subprocess-spawn. Clone-and-run-locally is the live-refresh path.
 - The HRRR bbox is set generously around CA; particles "escape" the box
