@@ -56,10 +56,23 @@ npx wrangler login
 
 ```bash
 npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret list          # confirm it actually attached
 ```
 
 Paste the token at the prompt. It is write-only from then on — not readable
 from the dashboard, not in `wrangler.toml`, not in git.
+
+**Set the secret *after* the first successful deploy.** Secrets attach to a
+deployed Worker, so running this while earlier deploys were still failing
+leaves nothing to attach to — and the symptom is quiet: the cron fires on time,
+every invocation returns `Ok`, and the only sign is the log line
+
+```json
+{"cron":"*/30 * * * *","action":"error","reason":"GITHUB_TOKEN secret is not set"}
+```
+
+`wrangler secret list` is the cheap check. A Worker that runs perfectly while
+doing nothing is worse than one that crashes.
 
 **4. One-time: make sure the account has a workers.dev subdomain**
 
