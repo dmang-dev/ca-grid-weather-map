@@ -11,6 +11,6 @@
     "logs": "wrangler tail"
   },
   "devDependencies": {
-    "wrangler": "^3.90.0"
+    "wrangler": "^4.119.0"
   }
 }

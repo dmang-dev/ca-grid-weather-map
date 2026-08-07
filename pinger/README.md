@@ -16,6 +16,19 @@ It checks the deployed `manifest.json` every 30 minutes and dispatches
 `MAX_AGE_MINUTES` (110). The workflow's own cron stays armed as a backstop;
 checking first is what stops the two schedulers queueing duplicate deploys.
 
+## A note on `npm audit`
+
+`npm audit` reports a few advisories against `undici`, reached via
+`wrangler → miniflare → undici`. Two things to know before chasing them:
+
+- **Nothing vulnerable ships.** miniflare is Wrangler's *local* dev sandbox.
+  The deployed bundle is ~3 KiB of this worker and contains no `undici` at
+  all — verify with `npx wrangler deploy --dry-run --outdir=.wrangler/dryrun`
+  and grep the output.
+- **npm's suggested fix is behind us.** It proposes wrangler 4.35.0; this
+  pins ^4.119.0, which is newer. There is nothing further to upgrade to, so
+  `npm audit fix --force` would only downgrade Wrangler.
+
 ## Setup
 
 You need a Cloudflare account and a GitHub token. Both stay yours — the token
@@ -31,7 +44,7 @@ goes straight into Wrangler's secret store and never appears in this repo.
 - Set an expiry you're happy to rotate on; the worker starts failing loudly
   in `wrangler tail` when it lapses.
 
-**2. Install and authenticate**
+**2. Install and authenticate** (Wrangler 4; needs Node 20+)
 
 ```bash
 cd pinger
