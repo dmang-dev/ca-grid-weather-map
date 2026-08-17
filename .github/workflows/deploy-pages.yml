@@ -64,8 +64,13 @@ jobs:
       # only in that case, so a partial outage still deploys with the layers
       # that did work, which is the behaviour we want.
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+      # No actions/configure-pages step on purpose. It exists to hand a base
+      # path to static site generators, and nothing here reads its outputs —
+      # Pages is already enabled with build_type=workflow, so it enabled
+      # nothing either. Every action in a job is a tarball fetched from
+      # codeload during "Set up job", and that download 429s under load: it
+      # took out the 14:49 and 16:00 runs on 2026-08-17 before checkout even
+      # started. One less action is one less thing to rate-limit.
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
