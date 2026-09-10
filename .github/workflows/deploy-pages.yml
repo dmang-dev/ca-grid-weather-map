@@ -51,6 +51,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Gives fetch_data.py a previous snapshot to fall back on. Without it a
+      # failing fetcher drops its layer from the site entirely rather than
+      # serving the last good copy as "cached" — see the script's docstring.
+      # Best-effort: never fails the build, and a cold start just fetches
+      # everything from upstream.
+      - name: Seed data/ from the published site
+        env:
+          SITE: https://dmang.com/ca-grid-weather-map/data
+        run: python .github/scripts/seed_data.py
+
       - name: Fetch all data sources
         env:
           PYTHONUTF8: "1"

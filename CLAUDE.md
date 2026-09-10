@@ -59,6 +59,16 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   stays fresh without the output entering git history — committing it
   every 2 hours had taken the repo to 459 MB. Run `python fetch_data.py`
   to populate `data/` locally; only `data/README.md` is tracked.
+- **The deploy seeds `data/` before fetching.** Because nothing is
+  committed, a runner starts empty — which silently disabled
+  `run_one()`'s stale carry-forward: with no previous file and no
+  previous manifest, a failing fetcher returned `error` and its layer
+  **vanished from the site** instead of being served as `cached`. That
+  is how one removed CEC field took utility territories off the map for
+  four days in Sept 2026, as a 404. `.github/scripts/seed_data.py`
+  downloads the published snapshot first, so the safety net works again.
+  It is best-effort by design: malformed or missing files are skipped
+  and it always exits 0, so a cold start behaves exactly as before.
 - **Fetchers are failure-isolated.** Each fetches one source and writes
   one file. A broken upstream must not prevent the others from updating.
 - **Frontend is single-file.** `index.html` carries all the JS/CSS. No
