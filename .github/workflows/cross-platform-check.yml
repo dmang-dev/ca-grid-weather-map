@@ -5,6 +5,14 @@ name: Cross-platform install check
 # Triggers on every push to main and on pull requests.
 
 on:
+  # Weekly, so upstream schema drift gets caught. The push triggers below only
+  # fire when *our* files change, which meant this never ran between Aug 17 and
+  # Sep 10 2026 — and CEC removing one field kept the utility-territories layer
+  # off the map for four days with the guard sitting right here, unable to run.
+  # 09:37 Monday rather than the top of an hour: GitHub delays and drops
+  # scheduled runs at peak times.
+  schedule:
+    - cron: '37 9 * * 1'
   push:
     branches: [main]
     paths:
@@ -72,14 +80,23 @@ jobs:
         run: |
           import json, sys, pathlib
           m = json.loads(pathlib.Path("data/manifest.json").read_text())
-          required = ("wind", "outages", "psps", "alerts", "territory",
-                      "counties", "fires", "inciweb")
-          failures = [k for k in required if m.get(k, {}).get("status") != "ok"]
+          # Derived from the manifest, never a hardcoded list. The list that
+          # used to live here named 8 layers while the manifest carried 12 —
+          # raws, calfire, fire_points and evacuations could all have broken
+          # without this check noticing.
+          layers = {k: v for k, v in m.items() if isinstance(v, dict)}
+          failures = {k: v.get("status") for k, v in layers.items()
+                      if v.get("status") != "ok"}
+          # No seed step here on purpose: this job verifies a clean install can
+          # fetch everything from scratch, so "stale" is not a pass either.
+          if not layers:
+              print("FAIL: manifest contains no layers at all")
+              sys.exit(1)
           if failures:
-              print(f"FAIL: fetchers did not return status=ok: {failures}")
+              print(f"FAIL: {len(failures)} of {len(layers)} layers not ok: {failures}")
               print(json.dumps(m, indent=2))
               sys.exit(1)
-          print(f"All {len(required)} fetchers ok.")
+          print(f"All {len(layers)} layers ok: {', '.join(sorted(layers))}")
 
       # Desktop deps. We don't launch a window on CI — runners have no display
       # by default — but we verify pywebview and app.py import cleanly. That
