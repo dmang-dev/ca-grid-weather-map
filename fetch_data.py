@@ -1250,7 +1250,11 @@ TERRITORY_BASE = ("https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/ser
 def fetch_territory() -> dict:
     params = {
         "where": "1=1",
-        "outFields": "Acronym,Utility,Type,Sales_GWh_2023",
+        # No Sales_GWh_2023: CEC dropped it (the layer carries no sales/GWh
+        # field at all now), and ArcGIS rejects the whole query with a 400
+        # "'outFields' parameter is invalid" for one unknown field rather than
+        # ignoring it — which took the layer off the map entirely.
+        "outFields": "Acronym,Utility,Type",
         "outSR": 4326,
         "f": "geojson",
     }

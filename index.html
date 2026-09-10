@@ -345,9 +345,10 @@
           },
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
+            // CEC dropped Sales_GWh_2023 from this layer in 2026 and published
+            // no replacement, so annual sales no longer appear here.
             lyr.bindTooltip(
-              `${p.Utility || p.Acronym || '(unknown)'} (${p.Type || '?'})`
-              + (p.Sales_GWh_2023 ? ` — ${Math.round(p.Sales_GWh_2023).toLocaleString()} GWh/yr` : ''),
+              `${p.Utility || p.Acronym || '(unknown)'} (${p.Type || '?'})`,
               { sticky: true }
             );
           },
@@ -933,8 +934,7 @@
           const acronym = (p.Acronym || '').trim();
           const display = acronym || p.Utility || '?';
           const fullTitle = p.Utility ? ` title="${p.Utility.replace(/"/g, '&quot;')}"` : '';
-          const sales = p.Sales_GWh_2023 ? ` <span class="pill">${Math.round(p.Sales_GWh_2023).toLocaleString()} GWh</span>` : '';
-          return `<span${fullTitle}>${display}</span>${sales}`;
+          return `<span${fullTitle}>${display}</span>`;
         }).join('<br/>');
       } else hp.utility.innerHTML = NONE;
 
