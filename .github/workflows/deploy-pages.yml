@@ -66,13 +66,27 @@ jobs:
           PYTHONUTF8: "1"
         run: python fetch_data.py
 
-      - name: Show manifest
+      # fetch_data.py exits non-zero only when EVERY fetcher dies, so a single
+      # broken layer deploys green and silently — which is how one removed CEC
+      # field kept utility territories off the map for four days. Annotate
+      # rather than fail: a partial outage should still publish the layers that
+      # work, but it should not look like a clean run.
+      - name: Show manifest and flag degraded layers
+        shell: python
         run: |
-          python -c "import json; print(json.dumps(json.load(open('data/manifest.json')), indent=2))"
-
-      # Fail the build if every fetcher died — fetch_data.py exits non-zero
-      # only in that case, so a partial outage still deploys with the layers
-      # that did work, which is the behaviour we want.
+          import json, pathlib
+          m = json.loads(pathlib.Path("data/manifest.json").read_text())
+          print(json.dumps(m, indent=2))
+          layers = {k: v for k, v in m.items() if isinstance(v, dict)}
+          bad = {k: v for k, v in layers.items() if v.get("status") != "ok"}
+          for name, entry in bad.items():
+              detail = str(entry.get("error") or "")[:180]
+              print(f"::warning title=Layer {name} is {entry.get('status')}::{detail}")
+          if bad:
+              print(f"::warning title=Degraded deploy::"
+                    f"{len(bad)} of {len(layers)} layers not ok: {', '.join(sorted(bad))}")
+          else:
+              print(f"All {len(layers)} layers ok.")
 
       # No actions/configure-pages step on purpose. It exists to hand a base
       # path to static site generators, and nothing here reads its outputs —

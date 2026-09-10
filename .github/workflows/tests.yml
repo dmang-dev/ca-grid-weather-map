@@ -1,0 +1,53 @@
+name: Tests
+
+# Offline unit tests for the fetchers. Runs on every push and PR that touches
+# the code they cover — fast enough (well under a second) that there is no
+# reason to gate it behind path filters as narrowly as the cross-platform
+# check does.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fetch_data.py'
+      - 'tests/**'
+      - '.github/scripts/**'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    paths:
+      - 'fetch_data.py'
+      - 'tests/**'
+      - '.github/scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Deliberately NOT requirements.txt: eccodes alone takes ~5 minutes to
+      # install, and none of it is needed here. fetch_data.py imports only
+      # numpy and requests at module scope — herbie, cfgrib and shapely are
+      # imported lazily inside the fetchers that use them, and every test
+      # stubs the network anyway. The full install is already covered by
+      # cross-platform-check.yml.
+      - name: Install the imports fetch_data.py needs at module scope
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy requests
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -t tests -v
