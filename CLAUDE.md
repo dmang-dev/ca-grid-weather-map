@@ -152,6 +152,19 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   The workflow cron stays armed as a backstop; the worker checks the
   manifest age first so the two schedulers don't queue duplicate deploys.
   The UI's stale threshold (4.5 h) is set to tolerate one missed tick.
+- **Basemap tiles fail as 200s, not errors.** CARTO started requiring a
+  key for raster basemaps in Sept 2026. Keyless requests return real
+  tiles stamped "API KEY REQUIRED" — and an invalid, revoked, over-quota
+  or wrong-referrer key returns the *identical* bytes. Leaflet's
+  `tileerror` never fires, so `index.html` verifies the key by comparing
+  a keyed probe tile against a keyless one, and uses Esri's dark gray
+  basemap when there's no key, the probe fails, or CARTO tiles start
+  erroring outright. `CARTO_KEY` ships in page source by design and is
+  restricted to `dmang.com`; CARTO's form rejects `localhost`, so local
+  dev falls back to Esri automatically (and spends no quota). The Esri
+  fallback has the same trap one level down: data only to zoom 16, then a
+  light-gray "Map data not yet available" tile as a 200 — hence
+  `maxNativeZoom: 16`.
 - The hosted demo's refresh button is disabled because GitHub Pages
   can't subprocess-spawn. Clone-and-run-locally is the live-refresh path.
 - The HRRR bbox is set generously around CA; particles "escape" the box
