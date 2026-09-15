@@ -152,16 +152,20 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   The workflow cron stays armed as a backstop; the worker checks the
   manifest age first so the two schedulers don't queue duplicate deploys.
   The UI's stale threshold (4.5 h) is set to tolerate one missed tick.
-- **Basemap tiles fail as 200s, not errors.** CARTO started requiring a
-  key for raster basemaps in Sept 2026. Keyless requests return real
-  tiles stamped "API KEY REQUIRED" — and an invalid, revoked, over-quota
-  or wrong-referrer key returns the *identical* bytes. Leaflet's
-  `tileerror` never fires, so `index.html` verifies the key by comparing
-  a keyed probe tile against a keyless one, and uses Esri's dark gray
-  basemap when there's no key, the probe fails, or CARTO tiles start
-  erroring outright. `CARTO_KEY` ships in page source by design and is
-  restricted to `dmang.com`; CARTO's form rejects `localhost`, so local
-  dev falls back to Esri automatically (and spends no quota). The Esri
+- **A bad basemap key doesn't error.** CARTO started requiring a key for
+  raster basemaps in Sept 2026. Keyless requests return real tiles
+  stamped "API KEY REQUIRED", and an invalid key returns the
+  *byte-identical* watermarked tile — both as 200s, so Leaflet's
+  `tileerror` never fires. A valid key from an unlisted referrer gets a
+  403 instead, but with **no CORS headers**, so a page only ever sees a
+  rejected fetch, indistinguishable from being offline. `index.html`
+  therefore verifies the key by fetching one tile with and without it:
+  keyless-loads-but-keyed-fails means refused here, identical bytes mean
+  an invalid key, different bytes mean it works. Esri's dark gray basemap
+  stands in otherwise, and on genuine tile errors at runtime.
+  `CARTO_KEY` ships in page source by design and is restricted to
+  `dmang.com`; CARTO's form rejects `localhost`, so local dev is refused
+  and falls back to Esri automatically (spending no quota). The Esri
   fallback has the same trap one level down: data only to zoom 16, then a
   light-gray "Map data not yet available" tile as a 200 — hence
   `maxNativeZoom: 16`.

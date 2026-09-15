@@ -237,17 +237,21 @@
     // and every overlay colour on this map was chosen against its near-black
     // ground. Since Sept 2026 CARTO requires a key for raster tiles.
     //
-    // The trap is that nothing fails. Keyless requests still return real tiles
-    // stamped "API KEY REQUIRED", and an invalid, revoked, over-quota or
-    // wrong-referrer key returns the *same* response — same 200, same bytes.
-    // Leaflet's tileerror never fires for a dead key; the watermark just comes
-    // back. So the key is verified by comparing a keyed tile against a keyless
-    // one, and Esri's dark basemap stands in whenever CARTO isn't usable.
+    // What CARTO actually returns, all observed:
+    //   no key                       200, real tile stamped "API KEY REQUIRED"
+    //   invalid key                  200, byte-identical watermarked tile
+    //   valid key, unlisted referrer 403 — and with no CORS headers, so a page
+    //                                can't read it; the fetch just rejects
+    //   valid key, listed referrer   200, clean tile (different bytes)
+    // A bad key therefore never errors, and Leaflet's tileerror never fires
+    // for it — the watermark just comes back. So the key is verified rather
+    // than assumed, and Esri's dark basemap stands in when CARTO isn't usable.
     //
-    // Free key: carto.com/basemaps/apikey. It ships in page source by design,
-    // so restrict it to dmang.com. Their form won't accept localhost, which is
-    // fine — local dev fails the probe and uses Esri, and doesn't spend quota.
-    const CARTO_KEY = '';
+    // Key from carto.com/basemaps/apikey. It ships in page source by design
+    // and is restricted to dmang.com, which is what actually protects it.
+    // Their form rejects localhost, so local dev is refused, uses Esri, and
+    // spends no quota. github.io needs no entry: it 301s to dmang.com.
+    const CARTO_KEY = 'cb1_3lgq_1_31913c96e5a5b47314c13173';
 
     const BASEMAP_VERDICT = 'cagrid-basemap-verdict';
     const VERDICT_TTL_MS = 12 * 3600 * 1000;
@@ -310,19 +314,32 @@
       }
     }
 
-    // Keyless is always watermarked. A working key must return different
-    // bytes for the same tile; identical bytes mean the key is doing nothing.
+    // Does the key work *from this origin*? Fetches the same tile with and
+    // without it. Resolves true/false when the answer is clear; rejects when
+    // it can't tell (offline, CARTO down) so the caller keeps what's showing.
     async function cartoKeyTakesEffect() {
       const get = url => fetch(url, { cache: 'no-store' }).then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status} from CARTO`);
         return r.arrayBuffer();
       });
-      const [bare, keyed] = await Promise.all([
+      const [bare, keyed] = await Promise.allSettled([
         get(CARTO_PROBE),
         get(CARTO_PROBE + '?key=' + encodeURIComponent(CARTO_KEY)),
       ]);
-      if (bare.byteLength !== keyed.byteLength) return true;
-      const a = new Uint8Array(bare), b = new Uint8Array(keyed);
+
+      // Keyless loaded but keyed didn't: the network is plainly fine, so this
+      // is the key being refused here — the CORS-less 403 an unlisted referrer
+      // gets, which a page only ever sees as a failed fetch.
+      if (bare.status === 'fulfilled' && keyed.status === 'rejected') return false;
+      // The reverse: keyless refused, keyed allowed. The key clearly works.
+      if (bare.status === 'rejected' && keyed.status === 'fulfilled') return true;
+      // Both failed: can't tell anything about the key.
+      if (keyed.status === 'rejected') throw keyed.reason;
+
+      // Both loaded. Keyless is always watermarked, so a working key must
+      // return different bytes; identical bytes mean the key did nothing.
+      const a = new Uint8Array(bare.value), b = new Uint8Array(keyed.value);
+      if (a.length !== b.length) return true;
       for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
       return false;
     }
