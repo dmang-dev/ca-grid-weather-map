@@ -180,7 +180,10 @@
 
   <header class="info-box" role="region" aria-label="Map status and data refresh">
     <h1>CA IOU wind &times; outages &times; PSPS</h1>
-    <div class="meta" id="meta">Loading <code>data/manifest.json</code>&hellip;</div>
+    <!-- The banner re-renders every minute into #banner. Notes other code
+         appends to #meta (wind layer failed, ...) land after it and stay;
+         #banner-newer holds the reload link, outside the re-render. -->
+    <div class="meta" id="meta"><span id="banner-newer"></span><span id="banner">Loading <code>data/manifest.json</code>&hellip;</span></div>
     <button id="refresh-btn" type="button"
             aria-describedby="refresh-status"
             aria-label="Refresh all data: HRRR wind, outages, PSPS events, and NWS alerts">
@@ -400,6 +403,34 @@
       if (ms == null) return '—';
       return new Date(ms).toLocaleString();
     }
+    // Manifest timestamps are UTC, but some were written without an offset
+    // (the HRRR run; a carried-forward entry keeps its old string), and JS
+    // reads an offset-less date-time as LOCAL time — the run showed 7-8 h late
+    // in California. No Z or ±hh:mm means UTC.
+    function manifestTime(s) {
+      s = String(s ?? '');
+      return Date.parse(/T[\d:.]+$/.test(s) ? s + 'Z' : s);
+    }
+    // Every string from upstream (ArcGIS, CAL FIRE, NWS, InciWeb, Zonehaven)
+    // is text, not markup: a fire or zone name with "&" or "<" in it, or an
+    // agency's free-text evacuation reason, would otherwise be parsed as HTML.
+    // Escape each one where it's interpolated; the HTML this page builds
+    // itself (pills, links, <b>) stays as is. null/undefined pass through so
+    // popupTable's '—' fallback still applies.
+    const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    function esc(s) {
+      return s == null ? s : String(s).replace(/[&<>"']/g, c => ESC[c]);
+    }
+    // An upstream URL only becomes a link if it's http(s) — a javascript: one
+    // would run on click. Otherwise the label (already escaped) stands alone.
+    function httpUrl(u) {
+      const s = String(u ?? '').trim();
+      return /^https?:\/\//i.test(s) ? s : null;
+    }
+    function linkTo(url, html) {
+      const u = httpUrl(url);
+      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${html}</a>` : html;
+    }
     // Nearest RAWS station to the cursor, as an observed-vs-forecast footnote.
     // Only within 25 km — a station two counties away says nothing about the
     // wind here, and a stale reading is worse than none.
@@ -419,10 +450,10 @@
       if (km > 25) return '';
       const p = best.properties;
       if (p.wind_speed_mph == null) return '';
-      const gust = p.wind_gust_mph != null ? `, gust ${p.wind_gust_mph}` : '';
-      const name = (p.station_name || p.station_id || 'station').replace(/</g, '&lt;');
+      const gust = p.wind_gust_mph != null ? `, gust ${esc(p.wind_gust_mph)}` : '';
+      const name = esc(p.station_name || p.station_id || 'station');
       return `<br/><span class="pill" title="RAWS observed, ${km.toFixed(0)} km away">obs</span> ` +
-             `${p.wind_speed_mph} mph ${p.wind_cardinal_direction || ''}${gust} ` +
+             `${esc(p.wind_speed_mph)} mph ${esc(p.wind_cardinal_direction || '')}${gust} ` +
              `<span style="color:#9aa0a6">— ${name}</span>`;
     }
     function popupTable(rows) {
@@ -481,7 +512,7 @@
             // CEC dropped Sales_GWh_2023 from this layer in 2026 and published
             // no replacement, so annual sales no longer appear here.
             lyr.bindTooltip(
-              `${p.Utility || p.Acronym || '(unknown)'} (${p.Type || '?'})`,
+              esc(`${p.Utility || p.Acronym || '(unknown)'} (${p.Type || '?'})`),
               { sticky: true }
             );
           },
@@ -517,8 +548,17 @@
           displayValues: true,
           displayOptions: {
             velocityType: 'Wind',
-            displayPosition: 'bottomright',
-            displayEmptyString: 'No wind data',
+            // leaflet-velocity 2.x names. 2.1.4 silently ignores the 1.x ones
+            // this used to pass (displayPosition, displayEmptyString), which
+            // left the readout bottom-left, under the legend.
+            position: 'bottomright',
+            emptyString: 'No wind data',
+            // The default, 'bearingCCW', is where the wind blows *to*, counted
+            // counter-clockwise: an offshore NE wind read 135° beside the hover
+            // panel's NE. meteoCW is the meteorological "from" bearing the panel
+            // uses. showCardinal stays off — 2.1.4's compass is mirrored (90° →
+            // "W"), which is only right for the CCW conventions.
+            angleConvention: 'meteoCW',
             speedUnit: 'mph',
           },
           data: windData,
@@ -543,8 +583,9 @@
       })
       .catch(err => {
         console.warn('wind layer failed:', err);
+        // Escaped: a JSON.parse error quotes the start of the response body.
         document.getElementById('meta').insertAdjacentHTML('beforeend',
-          `<br/><b style="color:#f77">Wind layer failed: ${err}</b>`);
+          `<br/><b style="color:#f77">Wind layer failed: ${esc(err)}</b>`);
       });
 
     // --- 1b. RAWS observed wind (what anemometers actually recorded) ---
@@ -568,12 +609,12 @@
           }),
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
-            const n = (v, u) => v == null ? '—' : `${v} ${u}`;
+            const n = (v, u) => v == null ? '—' : `${esc(v)} ${u}`;
             lyr.bindPopup(popupTable([
-              ['Station', `<b>${p.station_name || p.station_id || 'Unnamed'}</b>`],
-              ['Wind', `${n(p.wind_speed_mph, 'mph')} ${p.wind_cardinal_direction || ''}`],
+              ['Station', `<b>${esc(p.station_name || p.station_id || 'Unnamed')}</b>`],
+              ['Wind', `${n(p.wind_speed_mph, 'mph')} ${esc(p.wind_cardinal_direction || '')}`],
               ['Gust', p._gust_rejected != null
-                ? `<span style="color:#9aa0a6">${p._gust_rejected} mph</span> <span class="pill">sensor rejected</span>`
+                ? `<span style="color:#9aa0a6">${esc(p._gust_rejected)} mph</span> <span class="pill">sensor rejected</span>`
                 : n(p.wind_gust_mph, 'mph')],
               ['Peak', n(p.peak_wind_speed_mph, 'mph')],
               ['Humidity', n(p.relative_humidity_pct, '%')],
@@ -619,15 +660,15 @@
         onEachFeature: (feat, lyr) => {
           const p = feat.properties;
           lyr.bindPopup(popupTable([
-            ['Utility', p.UtilityCompany],
-            ['Status', p.OutageStatus],
-            ['Type', p.OutageType],
-            ['Cause', p.Cause],
-            ['Customers', (p.ImpactedCustomers || 0).toLocaleString()],
-            ['County', p.County],
+            ['Utility', esc(p.UtilityCompany)],
+            ['Status', esc(p.OutageStatus)],
+            ['Type', esc(p.OutageType)],
+            ['Cause', esc(p.Cause)],
+            ['Customers', esc((p.ImpactedCustomers || 0).toLocaleString())],
+            ['County', esc(p.County)],
             ['Started', fmtDate(p.StartDate)],
             ['Est. restored', fmtDate(p.EstimatedRestoreDate)],
-            ['Incident', p.IncidentId],
+            ['Incident', esc(p.IncidentId)],
           ]));
         },
       });
@@ -637,12 +678,12 @@
         onEachFeature: (feat, lyr) => {
           const p = feat.properties;
           lyr.bindPopup(popupTable([
-            ['Utility', p.UtilityCompany],
-            ['Status', p.OutageStatus],
-            ['Type', p.OutageType],
-            ['Cause', p.Cause],
-            ['Customers', (p.ImpactedCustomers || 0).toLocaleString()],
-            ['County', p.County],
+            ['Utility', esc(p.UtilityCompany)],
+            ['Status', esc(p.OutageStatus)],
+            ['Type', esc(p.OutageType)],
+            ['Cause', esc(p.Cause)],
+            ['Customers', esc((p.ImpactedCustomers || 0).toLocaleString())],
+            ['County', esc(p.County)],
             ['Started', fmtDate(p.StartDate)],
             ['Est. restored', fmtDate(p.EstimatedRestoreDate)],
           ]));
@@ -670,36 +711,74 @@
     };
     const ALERT_FALLBACK = { color: '#cccccc', fillColor: '#cccccc', fillOpacity: 0.15, weight: 1 };
 
+    // An alert is drawn until its own end time, not until the next snapshot.
+    // Deploys land 5-9 h apart and a failing fetch carries the last file
+    // forward, so warnings NWS had already ended stayed on the map, in the
+    // hover panel and in the counts. `ends` is when the hazard ends; `expires`
+    // is only when the message lapses, so it stands in when there's no
+    // usable `ends`. No usable time at all keeps the alert — hiding a live
+    // warning is worse than showing a finished one. Only ISO date-times count:
+    // V8's Date.parse reads stray text with a digit in it ("x 1") as 2001.
+    function alertEnded(p, now) {
+      const t = [p.ends, p.expires]
+        .filter(s => /^\d{4}-\d\d-\d\dT/.test(s))
+        .map(s => Date.parse(s)).find(isFinite);
+      return t !== undefined && t <= now;
+    }
+    function alertCounts(features) {
+      const counts = {};
+      features.forEach(f => { counts[f.properties.event] = (counts[f.properties.event] || 0) + 1; });
+      return counts;
+    }
+    function alertsLabel(features) {
+      const label = Object.entries(alertCounts(features))
+        .map(([k, v]) => `${esc(k.replace(/ (Warning|Watch|Advisory)/, ''))}:${v}`).join(' / ');
+      return `NWS alerts (${features.length}${label ? ' — ' + label : ''})`;
+    }
+
+    let alertsLayer = null;
+    // Re-run on the banner's one-minute tick and when the page comes back
+    // into view, not just at load: an end time passes whether or not anyone
+    // reloads, and an installed PWA can go a day without one.
+    function pruneEndedAlerts() {
+      if (!alertsLayer) return;
+      const now = Date.now();
+      const ended = alertsLayer.getLayers().filter(l => alertEnded(l.feature.properties, now));
+      if (!ended.length) return;
+      ended.forEach(l => alertsLayer.removeLayer(l));
+      HOVER.alerts = { type: 'FeatureCollection', features: alertsLayer.getLayers().map(l => l.feature) };
+      relabelOverlay(alertsLayer, alertsLabel(HOVER.alerts.features));
+    }
+
     fetch('data/nws_alerts.geojson')
       .then(r => r.json())
       .then(gj => {
-        HOVER.alerts = gj;
-        const layer = L.geoJSON(gj, {
+        const now = Date.now();
+        HOVER.alerts = { ...gj, features: gj.features.filter(f => !alertEnded(f.properties, now)) };
+        alertsLayer = L.geoJSON(HOVER.alerts, {
           style: f => ALERT_STYLES[f.properties.event] || ALERT_FALLBACK,
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
             lyr.bindPopup(popupTable([
-              ['Event', `<b>${p.event}</b>`],
-              ['Severity', p.severity],
-              ['Urgency', p.urgency],
-              ['Areas', (p.areaDesc || '').slice(0, 200)],
+              ['Event', `<b>${esc(p.event)}</b>`],
+              ['Severity', esc(p.severity)],
+              ['Urgency', esc(p.urgency)],
+              ['Areas', esc((p.areaDesc || '').slice(0, 200))],
               ['Onset', fmtDate(Date.parse(p.onset))],
               ['Expires', fmtDate(Date.parse(p.expires || p.ends))],
-              ['Office', p.senderName],
-              ['Headline', `<div style="max-width:380px">${p.headline || ''}</div>`],
+              ['Office', esc(p.senderName)],
+              ['Headline', `<div style="max-width:380px">${esc(p.headline || '')}</div>`],
             ]) + (p.description
               ? `<details style="margin-top:6px"><summary>Description</summary>
-                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${p.description}</div></details>`
+                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${esc(p.description)}</div></details>`
               : ''),
               { maxWidth: 460 });
           },
         });
-        layer.addTo(map);
-        const counts = {};
-        gj.features.forEach(f => { counts[f.properties.event] = (counts[f.properties.event] || 0) + 1; });
-        const label = Object.entries(counts).map(([k, v]) => `${k.replace(/ (Warning|Watch|Advisory)/, '')}:${v}`).join(' / ');
-        overlays[`NWS alerts (${gj.features.length}${label ? ' — ' + label : ''})`] = layer;
+        alertsLayer.addTo(map);
+        overlays[alertsLabel(HOVER.alerts.features)] = alertsLayer;
         rebuildLayerControl();
+        renderBanner();   // its alert count is the drawn one
       })
       .catch(err => console.warn('NWS alerts failed:', err));
 
@@ -716,21 +795,19 @@
             const rawName = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed fire';
             // Attributes here may be backfilled from the incident point — FIRIS
             // perimeters arrive as geometry with almost nothing attached.
-            const name = p._calfire_url
-              ? `<a href="${p._calfire_url}" target="_blank" rel="noopener">${rawName}</a>`
-              : rawName;
+            const name = linkTo(p._calfire_url, esc(rawName));
             const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
-            const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : 'unknown';
+            const cont = p.attr_PercentContained != null ? `${esc(p.attr_PercentContained)}%` : 'unknown';
             lyr.bindPopup(popupTable([
               ['Fire', `<b>${name}</b>`],
               ['Size', `${acres} acres`],
               ['Contained', cont],
-              ['Cause', p.attr_FireCause || '—'],
+              ['Cause', esc(p.attr_FireCause || '—')],
               ['Discovered', fmtDate(p.attr_FireDiscoveryDateTime)],
-              ['County', p.attr_POOCounty || '—'],
+              ['County', esc(p.attr_POOCounty || '—')],
               ['Perimeter updated', fmtDate(p.poly_DateCurrent)],
               // WFIGS ground-mapped, or a FIRIS/CAL FIRE infrared flight.
-              ['Mapped by', p._perimeter_source || 'WFIGS'],
+              ['Mapped by', esc(p._perimeter_source || 'WFIGS')],
             ]));
           },
         });
@@ -777,16 +854,14 @@
                 (p._calfire_acres != null ? ' <span class="pill">CAL FIRE</span>' : '')
               : 'size not reported';
             const c = p.PercentContained != null ? p.PercentContained : p._calfire_contained;
-            const cont = c != null ? `${c}%` : 'unknown';
-            const name = p._calfire_url
-              ? `<a href="${p._calfire_url}" target="_blank" rel="noopener">${p.IncidentName || 'Unnamed'}</a>`
-              : (p.IncidentName || 'Unnamed');
+            const cont = c != null ? `${esc(c)}%` : 'unknown';
+            const name = linkTo(p._calfire_url, esc(p.IncidentName || 'Unnamed'));
             lyr.bindPopup(popupTable([
               ['Fire', `<b>${name}</b>`],
               ['Size', acres],
               ['Contained', cont],
-              ['County', p.POOCounty || '—'],
-              ['Protecting', p.POOProtectingAgency || '—'],
+              ['County', esc(p.POOCounty || '—')],
+              ['Protecting', esc(p.POOProtectingAgency || '—')],
               ['Discovered', fmtDate(p.FireDiscoveryDateTime)],
               ['Perimeter', p._has_perimeter
                 ? 'mapped — see the polygon'
@@ -821,19 +896,17 @@
           style: feat => styleFor(feat.properties.zone_status),
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
-            const zone = p.zone_id || p.known_as || 'Zone';
-            const title = p.url
-              ? `<a href="${p.url}" target="_blank" rel="noopener">${zone}</a>` : zone;
+            const title = linkTo(p.url, esc(p.zone_id || p.known_as || 'Zone'));
             // zone_status_reason is free text written by the issuing agency.
             const reason = (p.zone_status_reason || '').trim();
             lyr.bindPopup(popupTable([
               ['Zone', `<b>${title}</b>`],
-              ['Status', `<b>${p.zone_status || '—'}</b>`],
-              ['County', p.county_name || '—'],
-              ['Community', p.community || '—'],
-              ['Source', p.data_source_name || 'Zonehaven'],
+              ['Status', `<b>${esc(p.zone_status || '—')}</b>`],
+              ['County', esc(p.county_name || '—')],
+              ['Community', esc(p.community || '—')],
+              ['Source', esc(p.data_source_name || 'Zonehaven')],
             ]) + (reason
-              ? `<div style="margin-top:6px;max-width:380px;white-space:pre-wrap;font-size:11px">${reason}</div>`
+              ? `<div style="margin-top:6px;max-width:380px;white-space:pre-wrap;font-size:11px">${esc(reason)}</div>`
               : ''), { maxWidth: 420 });
           },
         });
@@ -857,21 +930,18 @@
           }),
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
-            const link = p.InciwebLink
-              ? `<a href="${p.InciwebLink}" target="_blank" rel="noopener">${p.IncidentName}</a>`
-              : (p.IncidentName || 'Unnamed');
-            const fb = p.FacebookURL && p.FacebookURL !== 'null'
-              ? ` &middot; <a href="${p.FacebookURL}" target="_blank" rel="noopener">FB</a>` : '';
-            const tw = p.TwitterURL && p.TwitterURL !== 'null'
-              ? ` &middot; <a href="${p.TwitterURL}" target="_blank" rel="noopener">X</a>` : '';
+            const link = linkTo(p.InciwebLink, esc(p.IncidentName || 'Unnamed'));
+            // InciWeb sends the string 'null' for no account; httpUrl drops it.
+            const fb = httpUrl(p.FacebookURL) ? ` &middot; ${linkTo(p.FacebookURL, 'FB')}` : '';
+            const tw = httpUrl(p.TwitterURL) ? ` &middot; ${linkTo(p.TwitterURL, 'X')}` : '';
             lyr.bindPopup(popupTable([
               ['Incident', `<b>${link}</b>${fb}${tw}`],
-              ['Agency', p.Agency || '—'],
-              ['Origin', p.OriginDate || '—'],
-              ['Location', p.Location || '—'],
+              ['Agency', esc(p.Agency || '—')],
+              ['Origin', esc(p.OriginDate || '—')],
+              ['Location', esc(p.Location || '—')],
             ]) + (p.IncidentOverview
               ? `<details style="margin-top:6px"><summary>Overview</summary>
-                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${p.IncidentOverview}</div></details>`
+                 <div style="max-width:420px;white-space:pre-wrap;font-size:11px">${esc(p.IncidentOverview)}</div></details>`
               : ''),
               { maxWidth: 460 });
           },
@@ -897,14 +967,14 @@
           onEachFeature: (feat, lyr) => {
             const p = feat.properties;
             lyr.bindPopup(popupTable([
-              ['Event', p.EventName],
-              ['IOU', p.IOU],
+              ['Event', esc(p.EventName)],
+              ['IOU', esc(p.IOU)],
               ['Status', p._is_active ? '<b style="color:#c33">ACTIVE</b>' : 'Historical'],
               ['First contact', fmtDate(p.FirstDateofPOC)],
               ['De-energization start', fmtDate(p.DeEnergizationStartDate)],
               ['Full restoration', fmtDate(p.FullRestorationDate)],
-              ['De-energized', p.De_Energization],
-              ['Customers de-energized', (p.CustomerDeEnergized || 0).toLocaleString()],
+              ['De-energized', esc(p.De_Energization)],
+              ['Customers de-energized', esc((p.CustomerDeEnergized || 0).toLocaleString())],
             ]));
           },
         });
@@ -918,17 +988,45 @@
     // --- Layer control (rebuilt as layers arrive) ---
     let layerControl;
     function rebuildLayerControl() {
+      // Keep keyboard focus across the rebuild. It also runs on the banner's
+      // one-minute tick now (an alert ending relabels its layer), and a
+      // focused checkbox destroyed under the user dropped focus to <body>.
+      // Leaflet tags each checkbox with its layer's stamp.
+      const focused = layerControl?.getContainer().contains(document.activeElement)
+        ? document.activeElement.layerId : undefined;
       if (layerControl) layerControl.remove();
       layerControl = L.control.layers(null, overlays, {
         collapsed: false,
         position: 'bottomright',  // top-right is taken by the hover panel
       }).addTo(map);
+      if (focused !== undefined) {
+        [...layerControl.getContainer().querySelectorAll('input')]
+          .find(i => i.layerId === focused)?.focus();
+      }
+    }
+    // Swap a layer's label in place, keeping its position in the control.
+    function relabelOverlay(layer, label) {
+      const entries = Object.entries(overlays).map(([k, l]) => [l === layer ? label : k, l]);
+      Object.keys(overlays).forEach(k => delete overlays[k]);
+      entries.forEach(([k, l]) => { overlays[k] = l; });
+      rebuildLayerControl();
     }
 
     // --- Manifest banner ---
-    fetch('data/manifest.json').then(r => r.json()).then(m => {
+    // Re-rendered every minute and whenever the page comes back into view.
+    // It used to be worked out once at load, so an installed PWA resumed
+    // hours later, or a tab left open, kept its load-time "20 min ago" and
+    // never turned stale.
+    let manifest = null;        // the manifest the page's layers loaded with
+    let newerManifest = false;  // a deploy landed since: offer a reload, never force one
+    const banner = document.getElementById('banner');
+    const bannerNewer = document.getElementById('banner-newer');
+
+    function renderBanner() {
+      const m = manifest;
+      if (!m) return;
       const lines = [];
-      const ageHours = (Date.now() - Date.parse(m.generated_at)) / 3.6e6;
+      const ageHours = (Date.now() - manifestTime(m.generated_at)) / 3.6e6;
       // The deploy refreshes every 2 h, so data is routinely ~2 h old by
       // design. A 3 h threshold left only an hour of slack and cried stale
       // whenever GitHub's scheduler dropped a single tick — which it does.
@@ -938,9 +1036,9 @@
         ? `${Math.round(ageHours * 60)} min ago`
         : `${ageHours.toFixed(1)} hours ago`;
       if (stale) {
-        lines.push(`<b style="color:#ffb84d">⚠ Stale data:</b> generated ${ageStr} (${new Date(m.generated_at).toLocaleString()})`);
+        lines.push(`<b style="color:#ffb84d">⚠ Stale data:</b> generated ${ageStr} (${fmtDate(manifestTime(m.generated_at))})`);
       } else {
-        lines.push(`<b>Generated:</b> ${new Date(m.generated_at).toLocaleString()} (${ageStr})`);
+        lines.push(`<b>Generated:</b> ${fmtDate(manifestTime(m.generated_at))} (${ageStr})`);
       }
       // A fetcher whose upstream was down leaves the previous snapshot in
       // place and reports "stale" — the layer is still on the map, just not
@@ -948,14 +1046,14 @@
       const live = (e) => e?.status === 'ok' || e?.status === 'stale';
       const cachedNote = (e) => {
         if (e?.status !== 'stale') return '';
-        const h = (Date.now() - Date.parse(e.as_of)) / 3.6e6;
+        const h = (Date.now() - manifestTime(e.as_of)) / 3.6e6;
         const age = isFinite(h)
           ? (h < 1 ? `${Math.round(h * 60)} min` : `${h.toFixed(1)} h`) + ' old'
           : 'from an earlier run';
         return ` <span style="color:#ffb84d">(cached, ${age} — upstream unavailable)</span>`;
       };
       if (live(m.wind))
-        lines.push(`<b>Wind:</b> HRRR run ${new Date(m.wind.run).toLocaleString()}, grid ${m.wind.grid?.join('×')}${cachedNote(m.wind)}`);
+        lines.push(`<b>Wind:</b> HRRR run ${fmtDate(manifestTime(m.wind.run))}, grid ${m.wind.grid?.join('×')}${cachedNote(m.wind)}`);
       else lines.push(`<b>Wind:</b> <span style="color:#f77">failed</span>`);
       if (live(m.raws))
         lines.push(`<b>RAWS observed:</b> ${m.raws.stations} stations, peak gust ${m.raws.max_gust_mph} mph${cachedNote(m.raws)}`);
@@ -967,9 +1065,12 @@
         lines.push(`<b>PSPS:</b> ${m.psps.events_total} events (last ${m.psps.lookback_days}d), ${m.psps.events_active} active${cachedNote(m.psps)}`);
       else lines.push(`<b>PSPS:</b> <span style="color:#f77">failed</span>`);
       if (live(m.alerts)) {
-        const by = m.alerts.by_event || {};
-        const parts = Object.entries(by).map(([k, v]) => `${v} ${k}`);
-        lines.push(`<b>NWS alerts:</b> ${m.alerts.alerts_total}${parts.length ? ' — ' + parts.join(', ') : ''}${cachedNote(m.alerts)}`);
+        // Once the layer is in, count what it draws: alerts that ended since
+        // the snapshot are off the map, so they're out of this line too.
+        const shown = HOVER.alerts && HOVER.alerts.features;
+        const by = shown ? alertCounts(shown) : (m.alerts.by_event || {});
+        const parts = Object.entries(by).map(([k, v]) => `${v} ${esc(k)}`);
+        lines.push(`<b>NWS alerts:</b> ${shown ? shown.length : m.alerts.alerts_total}${parts.length ? ' — ' + parts.join(', ') : ''}${cachedNote(m.alerts)}`);
       } else lines.push(`<b>NWS alerts:</b> <span style="color:#f77">failed</span>`);
       if (live(m.fires)) {
         // Living Atlas is the failover mirror for NIFC's WFIGS service.
@@ -996,10 +1097,51 @@
       if (live(m.inciweb))
         lines.push(`<b>InciWeb:</b> ${m.inciweb.incidents} incident${m.inciweb.incidents === 1 ? '' : 's'}${cachedNote(m.inciweb)}`);
       else lines.push(`<b>InciWeb:</b> <span style="color:#f77">failed</span>`);
-      document.getElementById('meta').innerHTML = lines.join('<br/>');
+      banner.innerHTML = lines.join('<br/>');
+    }
+
+    // A deploy may have landed while the page was out of view. Say so, but
+    // leave the reload to the user — they may be partway through a popup.
+    function checkForNewerManifest() {
+      if (!manifest || newerManifest) return;
+      // no-store: GitHub Pages serves max-age=600, so the HTTP cache would
+      // otherwise hand back the very manifest already on screen. It also
+      // tells sw.js not to keep this copy: the manifest it holds for offline
+      // launches has to stay the one that matches the layers it holds.
+      fetch('data/manifest.json', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(m => {
+          if (m && manifestTime(m.generated_at) > manifestTime(manifest.generated_at)) {
+            newerManifest = true;
+            // Written once, beside #banner rather than in it: the per-minute
+            // re-render replaced the link node, so a keyboard user who had
+            // tabbed to it lost focus to <body> and Enter did nothing.
+            bannerNewer.innerHTML = '<a href="" id="reload-newer">Newer data available — reload</a><br/>';
+          }
+        })
+        .catch(() => { /* offline — nothing newer to offer */ });
+    }
+
+    function tick() {
+      pruneEndedAlerts();
+      renderBanner();
+    }
+
+    fetch('data/manifest.json').then(r => r.json()).then(m => {
+      manifest = m;
+      renderBanner();
     }).catch(() => {
-      document.getElementById('meta').innerHTML =
+      banner.innerHTML =
         '<span style="color:#f77">No manifest found. Run <code>python fetch_data.py</code>.</span>';
+    });
+    setInterval(tick, 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      tick();
+      checkForNewerManifest();
+    });
+    bannerNewer.addEventListener('click', e => {
+      if (e.target.id === 'reload-newer') { e.preventDefault(); location.reload(); }
     });
 
     // --- Hover panel: what's at the cursor right now ---
@@ -1056,7 +1198,7 @@
       // County
       const counties = pipFeatures(HOVER.counties, pt);
       hp.county.innerHTML = counties.length
-        ? counties.map(f => f.properties.NAME).join(', ')
+        ? counties.map(f => esc(f.properties.NAME)).join(', ')
         : NONE;
 
       // Utility — prefer acronym (e.g. "PG&E"), full name on hover.
@@ -1066,8 +1208,8 @@
           const p = f.properties;
           const acronym = (p.Acronym || '').trim();
           const display = acronym || p.Utility || '?';
-          const fullTitle = p.Utility ? ` title="${p.Utility.replace(/"/g, '&quot;')}"` : '';
-          return `<span${fullTitle}>${display}</span>`;
+          const fullTitle = p.Utility ? ` title="${esc(p.Utility)}"` : '';
+          return `<span${fullTitle}>${esc(display)}</span>`;
         }).join('<br/>');
       } else hp.utility.innerHTML = NONE;
 
@@ -1087,7 +1229,7 @@
       // NWS alerts
       const alerts = pipFeatures(HOVER.alerts, pt);
       hp.alerts.innerHTML = alerts.length
-        ? alerts.map(f => `<b>${f.properties.event}</b>`).join('<br/>')
+        ? alerts.map(f => `<b>${esc(f.properties.event)}</b>`).join('<br/>')
         : NONE;
 
       // Outages: PG&E polygon containment + SCE/SDGE/SMUD point snap (within
@@ -1107,11 +1249,11 @@
       const outs = [...polyHits, ...pointHits];
       if (outs.length) {
         const totalCust = outs.reduce((s, f) => s + (f.properties.ImpactedCustomers || 0), 0);
-        const utilities = [...new Set(outs.map(f => f.properties.UtilityCompany))].join('/');
+        const utilities = [...new Set(outs.map(f => f.properties.UtilityCompany))].map(esc).join('/');
         const planned = outs.filter(f => (f.properties.OutageType || '').toLowerCase().includes('planned')).length;
         hp.outages.innerHTML =
           `<b>${outs.length}</b> outage${outs.length > 1 ? 's' : ''} ` +
-          `<span class="pill">${totalCust.toLocaleString()} cust</span> ` +
+          `<span class="pill">${esc(totalCust.toLocaleString())} cust</span> ` +
           `<span class="pill">${utilities}</span>` +
           (planned ? ` <span class="pill">${planned} planned</span>` : '');
       } else hp.outages.innerHTML = NONE;
@@ -1148,22 +1290,22 @@
           const p = f.properties;
           const name = p.attr_IncidentName || p.poly_IncidentName || 'Unnamed';
           const acres = p.poly_GISAcres ? Math.round(p.poly_GISAcres).toLocaleString() : '?';
-          const cont = p.attr_PercentContained != null ? `${p.attr_PercentContained}%` : '?';
-          return `<b>${name}</b> <span class="pill">${acres} ac</span> <span class="pill">${cont} contained</span>`;
+          const cont = p.attr_PercentContained != null ? `${esc(p.attr_PercentContained)}%` : '?';
+          return `<b>${esc(name)}</b> <span class="pill">${acres} ac</span> <span class="pill">${cont} contained</span>`;
         });
         for (const f of fpHits) {
           const p = f.properties;
           const a = p._calfire_acres != null ? p._calfire_acres : p.IncidentSize;
           const acres = a != null ? `${Math.round(a).toLocaleString()} ac` : 'size ?';
           const c = p.PercentContained != null ? p.PercentContained : p._calfire_contained;
-          const cont = c != null ? `${c}%` : '?';
-          parts.push(`<b>${p.IncidentName || 'Unnamed'}</b> <span class="pill">${acres}</span>` +
+          const cont = c != null ? `${esc(c)}%` : '?';
+          parts.push(`<b>${esc(p.IncidentName || 'Unnamed')}</b> <span class="pill">${acres}</span>` +
             ` <span class="pill">${cont} contained</span>` +
             ` <span class="pill">${p._has_perimeter ? 'origin point' : 'no perimeter'}</span>`);
         }
         for (const f of iwHits) {
           const p = f.properties;
-          parts.push(`<b>${p.IncidentName}</b> <span class="pill">InciWeb</span>`);
+          parts.push(`<b>${esc(p.IncidentName)}</b> <span class="pill">InciWeb</span>`);
         }
         hp.fires.innerHTML = parts.join('<br/>');
       } else hp.fires.innerHTML = NONE;
@@ -1179,9 +1321,9 @@
           .map(f => {
             const p = f.properties;
             const c = COLOR[p.zone_status] || '#ccc';
-            return `<b style="color:${c}">${p.zone_status || '?'}</b> ` +
-                   `<span class="pill">${p.zone_id || p.known_as || 'zone'}</span>` +
-                   (p.county_name ? ` <span style="color:#9aa0a6">${p.county_name}</span>` : '');
+            return `<b style="color:${c}">${esc(p.zone_status || '?')}</b> ` +
+                   `<span class="pill">${esc(p.zone_id || p.known_as || 'zone')}</span>` +
+                   (p.county_name ? ` <span style="color:#9aa0a6">${esc(p.county_name)}</span>` : '');
           }).join('<br/>');
       } else hp.evac.innerHTML = NONE;
 
@@ -1191,7 +1333,7 @@
         hp.psps.innerHTML = psps.map(f => {
           const p = f.properties;
           const tag = p._is_active ? '<span class="pill" style="background:#a22">ACTIVE</span>' : '<span class="pill">historical</span>';
-          return `${p.EventName || p.IOU} ${tag}`;
+          return `${esc(p.EventName || p.IOU)} ${tag}`;
         }).join('<br/>');
       } else hp.psps.innerHTML = NONE;
     }
