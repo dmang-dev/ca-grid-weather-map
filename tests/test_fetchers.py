@@ -76,7 +76,12 @@ class RawsGustQC(FetchDataTest):
         self.assertFalse(fd._gust_is_suspect(10, None))
 
     def _stub_stations(self, *stations):
-        return mock.patch.object(fd, "arcgis_query_all", return_value=collection(*stations))
+        # Padded with calm, gustless stations up to the floor RawsMinimum covers,
+        # so these tests exercise QC rather than the short-count guard.
+        filler = [point(-120, 37, station_name=f"FILL{i}", wind_speed_mph=2.0, wind_gust_mph=None)
+                  for i in range(max(0, fd.RAWS_MIN_STATIONS - len(stations)))]
+        return mock.patch.object(fd, "arcgis_query_all",
+                                 return_value=collection(*stations, *filler))
 
     def test_bad_sensor_is_nulled_flagged_and_excluded_from_the_max(self):
         with self._stub_stations(
@@ -92,10 +97,50 @@ class RawsGustQC(FetchDataTest):
         self.assertEqual(bad["_gust_rejected"], 109.0, "raw value kept for the popup")
 
     def test_zero_stations_is_an_error_not_calm_weather(self):
-        with self._stub_stations():
+        with mock.patch.object(fd, "arcgis_query_all", return_value=collection()):
             with self.assertRaises(RuntimeError) as ctx:
                 fd.fetch_raws()
         self.assertIn("no stations", str(ctx.exception))
+
+
+class RawsMinimum(FetchDataTest):
+    """12 of 100 deploys from Sep 15 to Oct 9 2026 published 532-1,864 stations
+    as ok while the upstream layer was emptied and refilled. The query has no
+    filter, so a short count is never real."""
+
+    PREV = {
+        "generated_at": "2026-10-08T21:29:00+00:00",
+        "raws": {"status": "ok", "duration_s": 0.7, "stations": 4208,
+                 "max_gust_mph": 47.0, "gusts_rejected": 1, "reporting_wind": 4100},
+    }
+
+    def _stations(self, n):
+        return collection(*[point(-120 + i * 1e-4, 37, station_name=f"S{i}",
+                                  wind_speed_mph=5.0, wind_gust_mph=9.0) for i in range(n)])
+
+    def test_a_short_count_raises_and_says_why(self):
+        with mock.patch.object(fd, "arcgis_query_all", return_value=self._stations(586)):
+            with self.assertRaises(RuntimeError) as ctx:
+                fd.fetch_raws()
+        self.assertIn("586", str(ctx.exception))
+        self.assertIn("refill", str(ctx.exception))
+        self.assertFalse((self.data_dir / "raws.geojson").exists(), "nothing written")
+
+    def test_a_normal_count_passes(self):
+        with mock.patch.object(fd, "arcgis_query_all",
+                               return_value=self._stations(fd.RAWS_MIN_STATIONS)):
+            self.assertEqual(fd.fetch_raws()["stations"], fd.RAWS_MIN_STATIONS)
+
+    def test_run_one_serves_the_last_full_file_as_stale(self):
+        self.write_data("manifest.json", self.PREV)
+        self.write_data("raws.geojson", self._stations(5))  # stands in for the 4,208
+        before = (self.data_dir / "raws.geojson").read_bytes()
+        with mock.patch.object(fd, "arcgis_query_all", return_value=self._stations(586)):
+            entry = fd.run_one("raws", fd.fetch_raws, fd._previous_manifest(), "raws.geojson")
+        self.assertEqual(entry["status"], "stale")
+        self.assertEqual(entry["stations"], 4208, "previous count carried forward")
+        self.assertIn("586", entry["error"])
+        self.assertEqual((self.data_dir / "raws.geojson").read_bytes(), before)
 
 
 class CountiesGuards(FetchDataTest):

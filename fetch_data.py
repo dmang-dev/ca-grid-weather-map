@@ -19,6 +19,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # Force UTF-8 stdout — Herbie prints box-drawing characters on first import
 # which crash on Windows' default cp1252 console encoding.
@@ -140,6 +141,48 @@ def arcgis_query_all(url: str, params: dict, *, what: str, page_size: int = 2000
 # =============================================================================
 # 1. HRRR wind
 # =============================================================================
+def _grid_to_earth_winds(u, v, lon, lov: float, latin1: float, latin2: float):
+    """Rotate grid-relative U/V on a Lambert conformal grid to eastward/northward.
+
+    The grid's y axis points at the cone's apex above LoV, not at the pole, so
+    away from LoV it leans off true north by n * (lon - LoV): the meridian
+    convergence, with n the cone constant. Rotation preserves speed.
+    """
+    phi1, phi2 = math.radians(latin1), math.radians(latin2)
+    if math.isclose(phi1, phi2):
+        n = math.sin(phi1)  # tangent cone, as HRRR's is
+    else:
+        n = (math.log(math.cos(phi1) / math.cos(phi2))
+             / math.log(math.tan(math.pi / 4 + phi2 / 2) / math.tan(math.pi / 4 + phi1 / 2)))
+    ang = np.radians(n * ((np.asarray(lon) - lov + 180.0) % 360.0 - 180.0))
+    cos, sin = np.cos(ang), np.sin(ang)
+    return cos * u + sin * v, -sin * u + cos * v
+
+
+def _earth_relative_winds(u, v, lon, attrs):
+    """U/V as eastward/northward components, rotated if the GRIB says they're not.
+
+    HRRR's 10 m winds are relative to its Lambert grid (uvRelativeToGrid=1),
+    and neither Herbie nor cfgrib rotates them. Written out as-is, every arrow
+    over California leaned 10-17 degrees clockwise (SF 15.5, LA 12.9, Needles
+    10.6, Crescent City 16.6) and the hover panel's HRRR direction disagreed
+    with the RAWS station beside it. If the attributes can't say which way the
+    vectors point, raise: run_one then keeps the last good wind.json and the
+    deploy flags it, which beats publishing a field that is silently rotated.
+    """
+    flag = attrs.get("GRIB_uvRelativeToGrid")
+    if flag == 0:
+        return u, v
+    params = [attrs.get(k) for k in ("GRIB_LoVInDegrees", "GRIB_Latin1InDegrees",
+                                     "GRIB_Latin2InDegrees")]
+    if flag != 1 or attrs.get("GRIB_gridType") != "lambert" or None in params:
+        raise RuntimeError(
+            f"HRRR U/V orientation unknown (uvRelativeToGrid={flag!r}, "
+            f"gridType={attrs.get('GRIB_gridType')!r}, LoV/Latin1/Latin2={params}); "
+            f"refusing to publish winds that may be rotated")
+    return _grid_to_earth_winds(u, v, lon, *(float(x) for x in params))
+
+
 def fetch_wind() -> dict:
     """Pull latest HRRR sfc 10m U/V wind, clip to PG&E bbox, write velocity JSON."""
     from herbie import Herbie  # imported lazily so other fetchers still run if missing
@@ -183,6 +226,9 @@ def fetch_wind() -> dict:
     lon2d = u["longitude"].values
     # HRRR longitudes are 0-360; normalize to -180..180
     lon2d = np.where(lon2d > 180, lon2d - 360, lon2d)
+    # Earth-relative before anything else: the rotation depends on each native
+    # point's longitude, which the resample below throws away.
+    u_vals, v_vals = _earth_relative_winds(u.values, v.values, lon2d, u.attrs)
 
     bbox = PGE_BBOX
     # Build a regular target grid over PG&E bbox at ~0.05° (~5km, close to HRRR native)
@@ -194,9 +240,6 @@ def fetch_wind() -> dict:
     # For each target cell, find the nearest HRRR grid point. We do this with
     # a flat KD-style lookup approximated by indexing into a coarse mask first,
     # then taking argmin over the small subset — fast enough for ~10k cells.
-    u_vals = u.values
-    v_vals = v.values
-
     out_u = np.full((len(target_lats), len(target_lons)), np.nan, dtype=np.float32)
     out_v = np.full_like(out_u, np.nan)
 
@@ -259,7 +302,10 @@ def fetch_wind() -> dict:
 
     (DATA_DIR / "wind.json").write_text(json.dumps(velocity))
     return {
-        "run": H.date.isoformat(),
+        # H.date is naive UTC. isoformat() left the offset off, and browsers
+        # read an offset-less date-time as local, so the banner put the run
+        # 7-8 h late in California. Say Z, as refTime above does.
+        "run": H.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "grid": [int(out_u.shape[0]), int(out_u.shape[1])],
         "bbox": bbox,
     }
@@ -338,7 +384,13 @@ NWS_HEADERS = {
     "Accept": "application/geo+json",
 }
 NWS_ALERTS_URL = "https://api.weather.gov/alerts/active"
+# Fallback only, for an alert that carries no affectedZones. A UGC code doesn't
+# say which kind of zone it is, and Red Flag Warnings and Fire Weather Watches
+# are issued on *fire* weather zones (CAZ270-285, NVZ4xx) that 404 here.
 NWS_ZONE_URL = "https://api.weather.gov/zones/forecast/{zone}"
+# affectedZones arrives in the feed, so it is never fetched as given: only an
+# api.weather.gov zone path passes, rebuilt from its parts.
+_NWS_ZONE_PATH = re.compile(r"/zones/([a-z]+)/([A-Za-z0-9]+)/?")
 CA_BOUNDARY_URL = (
     "https://services3.arcgis.com/fdvHcZVgB2QSRNkL/arcgis/rest/services/"
     "State_Boundary/FeatureServer/0/query"
@@ -370,22 +422,59 @@ ALERT_EVENTS = {
     "High Wind Watch",
     "Extreme Wind Warning",
 }
-# Per-event severity ordering used to keep popups consistent.
+# Zone geometry by URL, so a zone shared by several alerts is fetched once.
 _zone_cache: dict[str, dict | None] = {}
 
 
-def _fetch_zone(zone_id: str) -> dict | None:
-    """Return GeoJSON geometry for a forecast zone, or None on failure."""
-    if zone_id in _zone_cache:
-        return _zone_cache[zone_id]
+def _nws_zone_url(url) -> str | None:
+    """Canonical URL for an api.weather.gov zone, or None for anything else."""
+    if not isinstance(url, str):
+        return None
     try:
-        r = HTTP.get(NWS_ZONE_URL.format(zone=zone_id), headers=NWS_HEADERS, timeout=20)
+        parts = urlsplit(url.strip())
+    except ValueError:
+        # "https://[api.weather.gov/..." — one malformed entry must not fail
+        # the whole layer.
+        return None
+    m = _NWS_ZONE_PATH.fullmatch(parts.path)
+    if (parts.scheme != "https" or parts.netloc.lower() != "api.weather.gov"
+            or parts.query or parts.fragment or not m):
+        return None
+    return f"https://api.weather.gov/zones/{m[1]}/{m[2]}"
+
+
+def _alert_zone_urls(props: dict) -> list[str]:
+    """Zone URLs to draw an alert that came without a polygon.
+
+    affectedZones names each zone with its type (/zones/fire/CAZ270), which the
+    bare UGC code can't; the UGC fallback assumes a forecast zone.
+    """
+    listed = props.get("affectedZones")
+    if not listed:
+        listed = [NWS_ZONE_URL.format(zone=z)
+                  for z in (props.get("geocode") or {}).get("UGC", [])]
+    urls: list[str] = []
+    for raw in listed:
+        url = _nws_zone_url(raw)
+        if url is None:
+            print(f"    ignoring zone reference that isn't an NWS zone: {str(raw)[:120]}")
+        elif url not in urls:
+            urls.append(url)
+    return urls
+
+
+def _fetch_zone(url: str) -> dict | None:
+    """Return GeoJSON geometry for an NWS zone URL, or None on failure."""
+    if url in _zone_cache:
+        return _zone_cache[url]
+    try:
+        r = HTTP.get(url, headers=NWS_HEADERS, timeout=20)
         r.raise_for_status()
         geom = r.json().get("geometry")
     except Exception as e:
-        print(f"    zone {zone_id}: {e}")
+        print(f"    zone {url}: {e}")
         geom = None
-    _zone_cache[zone_id] = geom
+    _zone_cache[url] = geom
     return geom
 
 
@@ -414,34 +503,37 @@ def fetch_alerts() -> dict:
     print(f"  matched {len(alerts)} relevant alerts of {len(raw)} active CA alerts")
 
     # Collect zones from the alerts that need them.
-    needed = set()
-    for f in alerts:
-        if not f.get("geometry"):
-            for z in (f["properties"].get("geocode") or {}).get("UGC", []):
-                needed.add(z)
-    print(f"  fetching {len(needed)} forecast-zone polygons")
-    for z in sorted(needed):
-        _fetch_zone(z)
+    zone_urls = [[] if f.get("geometry") else _alert_zone_urls(f["properties"])
+                 for f in alerts]
+    needed = {u for urls in zone_urls for u in urls}
+    print(f"  fetching {len(needed)} zone polygons")
+    for url in sorted(needed):
+        _fetch_zone(url)
 
     # Build per-alert features with merged geometry clipped to California.
     out_features = []
     dropped_out_of_state = 0
-    for f in alerts:
+    no_geometry: list[str] = []
+    for f, urls in zip(alerts, zone_urls):
         p = f["properties"]
         geom_dict = f.get("geometry")
         if geom_dict:
             merged = shape(geom_dict)
         else:
             zone_geoms = []
-            for z in (p.get("geocode") or {}).get("UGC", []):
-                g = _zone_cache.get(z)
+            for url in urls:
+                g = _zone_cache.get(url)
                 if g:
                     try:
                         zone_geoms.append(shape(g))
                     except Exception:
                         pass
             if not zone_geoms:
-                continue  # nothing to draw
+                # Nothing to draw. This used to drop the alert without a trace:
+                # the Oct 8-9 2026 deploys lost 3 of 5 matched alerts this way,
+                # all issued on fire weather zones, and still reported ok.
+                no_geometry.append(p.get("event") or "unknown event")
+                continue
             merged = unary_union(zone_geoms)
 
         # Clip to CA — drops zone slivers that spill into NV/OR/AZ.
@@ -479,11 +571,18 @@ def fetch_alerts() -> dict:
     for f in out_features:
         e = f["properties"]["event"]
         counts[e] = counts.get(e, 0) + 1
-    return {
+    summary = {
         "alerts_total": len(out_features),
         "by_event": counts,
         "dropped_out_of_state": dropped_out_of_state,
+        "dropped_no_geometry": len(no_geometry),
     }
+    if no_geometry:
+        # The layer is still ok, so the deploy step reads this list to say so.
+        summary["warnings"] = [
+            f"{len(no_geometry)} of {len(alerts)} matched alerts not drawn: no zone "
+            f"geometry could be resolved ({', '.join(sorted(set(no_geometry)))})"]
+    return summary
 
 
 # =============================================================================
@@ -552,8 +651,8 @@ def _fire_keys(name) -> list[str]:
     return keys
 
 
-def _geom_center(geometry) -> tuple[float, float] | None:
-    """Rough (lat, lon) centre of any GeoJSON geometry, for sanity checks."""
+def _geom_bbox(geometry) -> tuple[float, float, float, float] | None:
+    """(min_lat, min_lon, max_lat, max_lon) of any GeoJSON geometry."""
     if not geometry:
         return None
     lons: list[float] = []
@@ -572,13 +671,34 @@ def _geom_center(geometry) -> tuple[float, float] | None:
     walk(geometry.get("coordinates") or [])
     if not lons:
         return None
-    return ((min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2)
+    return min(lats), min(lons), max(lats), max(lons)
+
+
+def _geom_center(geometry) -> tuple[float, float] | None:
+    """Rough (lat, lon) centre of any GeoJSON geometry, for sanity checks."""
+    box = _geom_bbox(geometry)
+    if not box:
+        return None
+    return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
 
 
 def _km_apart(lat1, lon1, lat2, lon2) -> float:
     """Rough great-circle distance in km — fine at the scale we compare at."""
     return math.hypot((lat1 - lat2) * 111.0,
                       (lon1 - lon2) * 111.0 * math.cos(math.radians(lat1)))
+
+
+def _km_outside(lat, lon, box) -> float:
+    """Rough km from (lat, lon) to a _geom_bbox() box; 0 anywhere inside it."""
+    return _km_apart(lat, lon, min(max(lat, box[0]), box[2]), min(max(lon, box[1]), box[3]))
+
+
+# How close a name match that needs confirming — a complex-name alias like
+# "53" — has to land before it is trusted. Generous: an origin point can sit
+# well outside a grown perimeter. A point is measured to a perimeter's extent
+# (_km_outside), not its centre: a Dixie-sized fire's origin sits ~50 km from
+# the middle of its own box.
+ALIAS_CONFIRM_KM = 40
 
 
 def _fires_from_wfigs() -> dict:
@@ -739,24 +859,73 @@ def fetch_fires() -> dict:
     # Union in FIRIS. Neither source contains the other: FIRIS has fires WFIGS
     # has no polygon for (Gann, Grade, Mines), and WFIGS has a few FIRIS lacks.
     # Best-effort — a FIRIS outage must not cost us the WFIGS perimeters.
-    firis_added = firis_replaced = 0
+    firis_added = firis_replaced = firis_merged = firis_covered = 0
     try:
+        try:
+            import shapely  # noqa: F401  (only the geometric checks need it)
+            shape_of = _shape_cache()
+        except ImportError:
+            print("  [fires] shapely unavailable — FIRIS merges by exact name only")
+            shape_of = None
         by_key = {_fire_key(f["properties"].get("attr_IncidentName")
                             or f["properties"].get("poly_IncidentName")): f
                   for f in gj["features"]}
-        for cand in _fires_from_firis():
-            key = _fire_key(cand["properties"]["attr_IncidentName"])
-            existing = by_key.get(key)
+
+        def area(f) -> float:
+            s = shape_of(f) if shape_of else None
+            return s.area if s is not None else 0.0
+
+        cands = _fires_from_firis()
+        first_added = len(gj["features"])
+        if shape_of:
+            # Smallest first, so a complex's sub-fires are on the map before its
+            # umbrella is tested against them. FIRIS lists CINDER COMPLEX ahead
+            # of CINDERCOMPLEX-5-4 and -5-3, and taken as listed the outcome hung
+            # on row order: one drew 5-4's shape under the complex's name,
+            # another the umbrella's shape under 5-3's.
+            cands.sort(key=area)
+        for cand in cands:
+            name = cand["properties"]["attr_IncidentName"]
+            key = _fire_key(name)
+            try:
+                how, existing = _match_firis(cand, gj["features"], by_key, shape_of)
+            except Exception as e:
+                # One bad polygon must not cost the layer; match it by name as before.
+                print(f"  [fires] FIRIS {name}: geometric match failed ({e})")
+                how, existing = ("name", by_key[key]) if key in by_key else ("new", None)
+            if how == "covered":
+                print(f"  [fires] FIRIS {name}: dropped, already >= "
+                      f"{FIRIS_COVERED_SHARE:.0%} inside perimeters on the map")
+                firis_covered += 1
+                for holder in existing:  # the perimeters that draw it
+                    _note_aka(holder, name)
+                continue
             if existing is None:
                 gj["features"].append(cand)
                 by_key[key] = cand
                 firis_added += 1
-            elif (cand["properties"].get("poly_DateCurrent") or 0) > \
-                 (existing["properties"].get("poly_DateCurrent") or 0):
+                continue
+            fresher = _fresher(cand, existing)
+            if how != "name":
+                firis_merged += 1
+                ename = (existing["properties"].get("attr_IncidentName")
+                         or existing["properties"].get("poly_IncidentName"))
+                print(f"  [fires] FIRIS {name} is {ename} (by {how}); "
+                      f"{'fresher, geometry swapped in' if fresher else 'older, dropped'}")
+                _note_aka(existing, name)
+            if fresher:
                 # Same fire, fresher flight — swap the geometry in place.
-                gj["features"][gj["features"].index(existing)] = cand
-                by_key[key] = cand
+                _swap_in_firis(existing, cand)
+                if shape_of:
+                    shape_of.forget(existing)
                 firis_replaced += 1
+        if shape_of:
+            # Then draw what was added largest first. index.html stacks the
+            # file in order, so the last perimeter is on top and takes the
+            # clicks; left smallest-first, an umbrella its sub-fires cover
+            # under 90% of would sit over them and swallow their popups.
+            gj["features"][first_added:] = sorted(gj["features"][first_added:],
+                                                  key=area, reverse=True)
     except Exception as e:
         print(f"  [fires] FIRIS perimeters unavailable: {e}")
 
@@ -768,7 +937,180 @@ def fetch_fires() -> dict:
         "source": source,
         "firis_added": firis_added,
         "firis_fresher": firis_replaced,
+        # FIRIS perimeters found to be a fire already drawn under another name
+        # (alias or overlap), and ones the existing perimeters already cover.
+        "firis_merged": firis_merged,
+        "firis_covered": firis_covered,
     }
+
+
+# A FIRIS perimeter can be a fire we already have under another name. The Aug
+# 4 2026 snapshot drew 4 of its 37 fires twice: WFIGS "3-6 WAGON" again as
+# FIRIS "WAGON" (sharing 88% of one shape and 99% of the other), WFIGS "5-3"
+# and "5-4" again as CINDERCOMPLEX-5-4 and -5-3 (95-99% — cross-named, so the
+# names alone would pair them wrong), and FIRIS's umbrella CINDER COMPLEX over
+# both. ~5.7k acres counted twice.
+# Kept conservative on purpose: a wrong merge hides a real fire, which is worse
+# than drawing one twice. Areas are compared in plain degrees, which is fine for
+# two polygons at the same latitude.
+FIRIS_SAME_FIRE_OVERLAP = 0.5  # shared area, as a share of EACH polygon
+FIRIS_COVERED_SHARE = 0.9      # share of a candidate already drawn by others
+# A merge keeps the fresher shape and drops the older, so the fresher must
+# already hold most of the older or the merge erases area only the older drew.
+# Fires grow, and what one source draws outside the other is edge noise:
+# WAGON's older flight sat 88% inside WFIGS's shape. A complex against one of
+# its sub-fires is no such thing ("5-3" is only 69% of CINDER COMPLEX), and
+# without this a fresh flight of one sub-fire would replace a whole-complex
+# WFIGS perimeter, leaving the rest of the complex undrawn.
+FIRIS_FRESHER_HOLDS = 0.8      # share of the older shape inside the fresher
+
+
+def _shape_cache():
+    """Memoized shapely geometry per perimeter feature; None where unusable.
+
+    Holds each feature it has seen, so an id() can't be reused under it.
+    """
+    from shapely.geometry import shape
+    from shapely.validation import make_valid
+    cache: dict[int, tuple[dict, object]] = {}
+
+    def shape_of(f: dict):
+        hit = cache.get(id(f))
+        if hit is not None:
+            return hit[1]
+        g = None
+        if f.get("geometry"):
+            try:
+                g = shape(f["geometry"])
+                if not g.is_valid:
+                    # buffer(0) drops the slivers and lines make_valid can leave.
+                    g = make_valid(g).buffer(0)
+                if g.is_empty or g.area <= 0:
+                    g = None
+            except Exception as e:
+                p = f["properties"]
+                print(f"  [fires] unusable geometry for "
+                      f"{p.get('attr_IncidentName') or p.get('poly_IncidentName')}: {e}")
+                g = None
+        cache[id(f)] = (f, g)
+        return g
+
+    shape_of.forget = lambda f: cache.pop(id(f), None)
+    return shape_of
+
+
+def _fresher(cand: dict, existing: dict) -> bool:
+    """Whether a FIRIS candidate's flight is newer than the perimeter we have."""
+    return ((cand["properties"].get("poly_DateCurrent") or 0)
+            > (existing["properties"].get("poly_DateCurrent") or 0))
+
+
+def _match_firis(cand: dict, features: list[dict], by_key: dict,
+                 shape_of) -> tuple[str, dict | list[dict] | None]:
+    """How a FIRIS candidate relates to the perimeters already in hand.
+
+    ("name" | "overlap" | "alias", feature) when it is that fire; ("covered",
+    [the perimeters that draw it]) when the map already does; ("new", None)
+    otherwise. Past the exact name every rule needs shapes, so without shapely
+    (shape_of is None) or a usable candidate polygon, only the name can match.
+    """
+    keys = _fire_keys(cand["properties"].get("attr_IncidentName"))
+    if keys and keys[0] in by_key:
+        return "name", by_key[keys[0]]
+
+    cs = shape_of(cand) if shape_of else None
+    if cs is None:
+        # Not even the alias: on Aug 4 it was cross-wired (below), and with no
+        # shape to check it against it would pair the wrong fires.
+        return "new", None
+
+    def merge_keeps_area(f) -> bool:
+        fs = shape_of(f)
+        if fs is None:
+            return False
+        older = fs if _fresher(cand, f) else cs
+        return cs.intersection(fs).area >= FIRIS_FRESHER_HOLDS * older.area
+
+    # Overlap before alias, because it can't be fooled by names: on Aug 4
+    # WFIGS's "5-3" carried 5-4's polygon, so the alias alone would have
+    # paired CINDERCOMPLEX-5-3 with the other fire.
+    best, best_area, swallowed = None, 0.0, 0
+    for f in features:
+        fs = shape_of(f)
+        if fs is None or not cs.intersects(fs):
+            continue
+        shared = cs.intersection(fs).area
+        if shared < FIRIS_SAME_FIRE_OVERLAP * fs.area:
+            continue
+        swallowed += 1
+        if shared >= FIRIS_SAME_FIRE_OVERLAP * cs.area and shared > best_area:
+            best, best_area = f, shared
+    # Holding most of two fires makes it an umbrella over them (CINDER
+    # COMPLEX held 98% of both "5-3" and "5-4"), not either one: swapping
+    # its shape into one would draw the other twice. The cover check below
+    # is what deals with those.
+    if best is not None and swallowed == 1 and merge_keeps_area(best):
+        return "overlap", best
+
+    # The alias is a bare sub-designation like "53": trust it only nearby.
+    centre = _geom_center(cand.get("geometry"))
+    for alias in keys[1:]:
+        f = by_key.get(alias)
+        fc = _geom_center(f.get("geometry")) if f else None
+        if centre and fc and _km_apart(*centre, *fc) <= ALIAS_CONFIRM_KM and merge_keeps_area(f):
+            return "alias", f
+
+    # Already drawn: an umbrella over its sub-fires (each mostly inside it),
+    # or an older flight inside a perimeter at least as fresh. NOT a fresher
+    # flight inside an older perimeter: that is a new fire — a reburn, an
+    # unburned island catching — and dropped, its shape went undrawn and its
+    # name, folded into the old perimeter, marked its point as mapped and
+    # could hand the old fire its containment and cause.
+    from shapely.ops import unary_union
+    held = [(f, fs) for f in features
+            if (fs := shape_of(f)) is not None and fs.intersects(cs)
+            and (cs.intersection(fs).area >= FIRIS_SAME_FIRE_OVERLAP * fs.area
+                 or not _fresher(cand, f))]
+    if held and (cs.intersection(unary_union([fs for _, fs in held])).area
+                 >= FIRIS_COVERED_SHARE * cs.area):
+        # What draws it is each perimeter sharing half of it or half of itself
+        # with it, not one that merely touches its edge.
+        return "covered", [f for f, fs in held if cs.intersection(fs).area
+                           >= FIRIS_SAME_FIRE_OVERLAP * min(cs.area, fs.area)]
+    return "new", None
+
+
+def _swap_in_firis(existing: dict, cand: dict) -> None:
+    """Take a fresher FIRIS flight's shape for a fire we already have.
+
+    Only the geometry and what describes it — its acreage, when it was mapped
+    and by whom — change hands. WFIGS's own attributes stay authoritative:
+    swapping the whole feature used to replace its containment, cause, county
+    and IRWIN id with FIRIS's blanks.
+    """
+    cp, p = cand["properties"], existing["properties"]
+    existing["geometry"] = cand["geometry"]
+    p["poly_DateCurrent"] = cp.get("poly_DateCurrent")
+    p["_perimeter_source"] = cp.get("_perimeter_source")
+    if cp.get("poly_GISAcres") is not None:
+        p["poly_GISAcres"] = cp["poly_GISAcres"]
+
+
+def _note_aka(feature: dict, name: str) -> None:
+    """Keep a FIRIS name that was merged into, or covered by, this perimeter.
+
+    The name leaves the file with the feature it came on, and incident points
+    find their perimeter by name. Without this, replaying Aug 4 2026 with
+    Cinder Complex still FIRIS-only, CAL FIRE's "Cinder Complex" point (WFIGS
+    points are single fires, so a complex's own point is CAL FIRE's) was drawn
+    as unmapped once the umbrella was dropped over its sub-fires, and no
+    perimeter carried its CAL FIRE link; a "Wagon Fire" point would fare the
+    same once WAGON joins "3-6 WAGON". fetch_fire_points and its backfill read
+    these back, confirmed by position.
+    """
+    aka = feature["properties"].setdefault("_aka", [])
+    if name not in aka:
+        aka.append(name)
 
 
 # =============================================================================
@@ -947,15 +1289,32 @@ def fetch_fire_points() -> dict:
     # and highlight the fires where the dot is the only thing there is to draw.
     mapped: set[str] = set()
     mapped_names: set[str] = set()
+    nearby_names: dict[str, list[tuple[float, float, float, float]]] = {}
     try:
         perims = json.loads((DATA_DIR / "wildfires.geojson").read_text())
         mapped = {_irwin(f["properties"].get("attr_IrwinID"))
                   for f in perims["features"]} - {""}
         # FIRIS perimeters carry no IRWIN id at all, so they need a name path
         # or every FIRIS-only fire would still claim to have no perimeter.
-        mapped_names = {k for f in perims["features"]
-                        for k in _fire_keys(f["properties"].get("attr_IncidentName")
-                                            or f["properties"].get("poly_IncidentName"))} - {""}
+        for f in perims["features"]:
+            p = f["properties"]
+            keys = _fire_keys(p.get("attr_IncidentName") or p.get("poly_IncidentName"))
+            # Any other name hit has to land near the perimeter. On Aug 4 2026
+            # a San Diego County point named "54" matched both WFIGS's "5-4"
+            # and CINDERCOMPLEX-5-4's alias, ~500 km away in Inyo, and was
+            # drawn dimmed as mapped when nothing mapped it. A perimeter with
+            # an IRWIN id already matched its own point by that id above.
+            if _irwin(p.get("attr_IrwinID")):
+                confirm = keys
+            else:
+                mapped_names.update(keys[:1])
+                confirm = keys[1:]
+            # So do the FIRIS names fetch_fires folded into this one.
+            confirm = confirm + [k for n in p.get("_aka") or [] for k in _fire_keys(n)]
+            box = _geom_bbox(f.get("geometry"))
+            for key in confirm:
+                if box:
+                    nearby_names.setdefault(key, []).append(box)
     except Exception as e:
         # Fail toward visibility: without the cross-reference every point is
         # treated as unmapped, which over-draws rather than hiding a fire.
@@ -964,8 +1323,13 @@ def fetch_fire_points() -> dict:
     unmapped = 0
     for f in gj["features"]:
         p = f["properties"]
-        p["_has_perimeter"] = (_irwin(p.get("IrwinID")) in mapped
-                               or _fire_key(p.get("IncidentName")) in mapped_names)
+        key = _fire_key(p.get("IncidentName"))
+        has = _irwin(p.get("IrwinID")) in mapped or key in mapped_names
+        if not has and key in nearby_names:
+            here = _geom_center(f.get("geometry"))
+            has = bool(here) and any(_km_outside(*here, box) <= ALIAS_CONFIRM_KM
+                                     for box in nearby_names[key])
+        p["_has_perimeter"] = has
         if not p["_has_perimeter"]:
             unmapped += 1
 
@@ -1000,14 +1364,20 @@ _BACKFILL = {
 }
 
 
-def _backfill_perimeter_attrs(points: list[dict]) -> int:
-    """Fill blank perimeter attributes from the incident point for that fire."""
+def _backfill_perimeter_attrs(points: list[dict]) -> tuple[int, int]:
+    """Fill blank perimeter attributes from the incident point for that fire.
+
+    Returns (perimeters filled, of which matched by a name that needed
+    confirming: a complex-name alias, or a FIRIS name folded into it).
+    """
     path = DATA_DIR / "wildfires.geojson"
     try:
         perims = json.loads(path.read_text())
     except Exception as e:
+        # Both counts: the caller unpacks two, and a bare 0 here crashed
+        # fetch_fire_points on a cold start with no perimeter file.
         print(f"  [fire points] no perimeter file to backfill: {e}")
-        return 0
+        return 0, 0
 
     by_key: dict[str, dict] = {}
     for pt in points:
@@ -1021,19 +1391,21 @@ def _backfill_perimeter_attrs(points: list[dict]) -> int:
     filled = aliased = 0
     for f in perims["features"]:
         p = f["properties"]
-        centre = _geom_center(f.get("geometry"))
+        box = _geom_bbox(f.get("geometry"))
+        keys = _fire_keys(p.get("attr_IncidentName") or p.get("poly_IncidentName"))
+        for name in p.get("_aka") or []:
+            keys += [k for k in _fire_keys(name) if k not in keys]
         src = None
-        for i, key in enumerate(_fire_keys(p.get("attr_IncidentName")
-                                           or p.get("poly_IncidentName"))):
+        for i, key in enumerate(keys):
             cand = by_key.get(key)
             if not cand:
                 continue
-            # The alias is a bare sub-designation like "53" — confirm it lands
-            # on the same fire before trusting it. Generous radius: an origin
-            # point can sit well outside a grown perimeter.
+            # The alias is a bare sub-designation like "53", and a folded-in
+            # FIRIS name isn't this perimeter's own — confirm either lands on
+            # the same fire before trusting it.
             if i > 0:
                 cc = _geom_center(cand.get("geometry"))
-                if not centre or not cc or _km_apart(*centre, *cc) > 40:
+                if not box or not cc or _km_outside(*cc, box) > ALIAS_CONFIRM_KM:
                     continue
                 aliased += 1
             src = cand["properties"]
@@ -1058,7 +1430,7 @@ def _backfill_perimeter_attrs(points: list[dict]) -> int:
 
     path.write_text(json.dumps(perims))
     if aliased:
-        print(f"  [fire points] {aliased} perimeter(s) matched via complex-name alias")
+        print(f"  [fire points] {aliased} perimeter(s) matched via an alias or folded-in name")
     return filled, aliased
 
 
@@ -1078,6 +1450,12 @@ RAWS_URL = ("https://bz1uwwpkuinzbk94.svcs5.arcgis.com/bz1uwWPKUInZBK94/arcgis/r
 # across 4,404 stations these thresholds reject exactly that one sensor.
 GUST_RATIO_LIMIT = 3.0
 GUST_ABS_FLOOR_MPH = 40.0
+# The query is where 1=1 with no time filter, so a short count is never real
+# weather — it is the upstream layer caught mid-refill. 12 of 100 deploys from
+# Sep 15 to Oct 9 2026 published 532-1,864 stations as ok, in six episodes of
+# 10-20 h. Normal runs return 3,900-4,450 and the short ones never topped
+# 2,672, so 3,000 sits clear of both.
+RAWS_MIN_STATIONS = 3000
 
 
 def _gust_is_suspect(speed, gust) -> bool:
@@ -1114,6 +1492,12 @@ def fetch_raws() -> dict:
     if not kept:
         # 4,000+ stations always report; zero means the query broke, not calm.
         raise RuntimeError("RAWS query returned no stations")
+    if len(kept) < RAWS_MIN_STATIONS:
+        # Raised before the write, so run_one keeps the last full file as stale.
+        raise RuntimeError(
+            f"RAWS returned only {len(kept)} stations (expected ~4,200, floor "
+            f"{RAWS_MIN_STATIONS}); the upstream layer is likely being emptied "
+            f"and refilled")
 
     rejected = 0
     for f in kept:

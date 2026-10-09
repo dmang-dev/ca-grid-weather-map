@@ -10,12 +10,16 @@ on:
     branches: [main]
     paths:
       - 'fetch_data.py'
+      - 'index.html'
+      - 'sw.js'
       - 'tests/**'
       - '.github/scripts/**'
       - '.github/workflows/tests.yml'
   pull_request:
     paths:
       - 'fetch_data.py'
+      - 'index.html'
+      - 'sw.js'
       - 'tests/**'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -43,11 +47,13 @@ jobs:
       # numpy and requests at module scope — herbie, cfgrib and shapely are
       # imported lazily inside the fetchers that use them, and every test
       # stubs the network anyway. The full install is already covered by
-      # cross-platform-check.yml.
+      # cross-platform-check.yml. shapely is the one extra: a light wheel the
+      # alert and fire-merge tests need, still imported lazily by fetch_data.py
+      # (test_lazy_imports.py holds it to that).
       - name: Install the imports fetch_data.py needs at module scope
         run: |
           python -m pip install --upgrade pip
-          pip install numpy requests
+          pip install numpy requests shapely
 
       - name: Run tests
         run: python -m unittest discover -s tests -t tests -v

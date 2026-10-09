@@ -1,6 +1,14 @@
 herbie-data>=2024.8.0
 cfgrib>=0.9.10
 eccodes>=2.37.0
+# eckitlib 2.3.x bundles its own PROJ (9.8.1), and on Linux findlibs loads
+# eckitlib's libraries with RTLD_GLOBAL — so a pyproj imported after eccodes
+# binds to that PROJ instead of its own, and the interpreter aborts at exit
+# ("free(): invalid pointer" / "double free", exit 134). That broke the ubuntu
+# leg of the cross-platform canary on Sep 21, Sep 28 and Oct 5 2026; the deploy
+# only survived because herbie happens to import pyproj before eccodes.
+# Last good: eckitlib 2.2.0.27 / eccodeslib 2.48.2.27.
+eckitlib<2.3; sys_platform == "linux"
 xarray>=2024.6.0
 numpy>=1.26,<2.3
 requests>=2.31

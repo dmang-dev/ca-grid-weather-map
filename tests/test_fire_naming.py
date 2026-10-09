@@ -132,6 +132,32 @@ class Distance(FetchDataTest):
         self.assertGreater(fd._km_apart(38.10, -120.77, 34.05, -118.24), 40)
 
 
+class DistanceToExtent(FetchDataTest):
+    """Name hits are confirmed against a perimeter's extent, not its centre:
+    a big fire's origin can sit far from the middle of its own box."""
+
+    # Roughly Dixie's footprint: it started at the south-west corner and ran
+    # north-east for ~100 km.
+    GEOM = {"type": "Polygon", "coordinates": [
+        [[-121.45, 39.82], [-120.60, 40.05], [-120.55, 40.60], [-121.20, 40.62],
+         [-121.50, 40.20], [-121.45, 39.82]]]}
+    BOX = fd._geom_bbox(GEOM)
+
+    def test_bbox(self):
+        self.assertEqual(self.BOX, (39.82, -121.50, 40.62, -120.55))
+        self.assertIsNone(fd._geom_bbox(None))
+
+    def test_inside_is_zero_even_far_from_the_centre(self):
+        origin = (39.871, -121.389)
+        self.assertGreater(fd._km_apart(*origin, *fd._geom_center(self.GEOM)),
+                           fd.ALIAS_CONFIRM_KM)
+        self.assertEqual(fd._km_outside(*origin, self.BOX), 0.0)
+
+    def test_outside_measures_to_the_nearest_edge(self):
+        self.assertAlmostEqual(fd._km_outside(38.82, -121.0, self.BOX), 111.0, places=1)
+        self.assertGreater(fd._km_outside(32.66, -117.07, self.BOX), 500)
+
+
 class IsoToMillis(FetchDataTest):
     def test_calfire_timestamp_becomes_epoch_millis(self):
         self.assertEqual(fd._iso_to_ms("2026-08-04T00:27:56Z"), 1785803276000)

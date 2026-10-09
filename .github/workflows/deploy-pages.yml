@@ -82,11 +82,20 @@ jobs:
           for name, entry in bad.items():
               detail = str(entry.get("error") or "")[:180]
               print(f"::warning title=Layer {name} is {entry.get('status')}::{detail}")
+          # Problems a fetcher survived but shouldn't hide, such as alerts it
+          # had no zone shape for: the layer reads ok, so say it here. Lists
+          # only — evacuations' "warnings" is a count of Evacuation Warnings.
+          noted = {k: v["warnings"] for k, v in layers.items()
+                   if isinstance(v.get("warnings"), list) and v["warnings"]}
+          for name, texts in noted.items():
+              for text in texts:
+                  print(f"::warning title=Layer {name}::{str(text)[:180]}")
+          also = f"; {len(noted)} with warnings: {', '.join(sorted(noted))}" if noted else ""
           if bad:
               print(f"::warning title=Degraded deploy::"
-                    f"{len(bad)} of {len(layers)} layers not ok: {', '.join(sorted(bad))}")
+                    f"{len(bad)} of {len(layers)} layers not ok: {', '.join(sorted(bad))}{also}")
           else:
-              print(f"All {len(layers)} layers ok.")
+              print(f"All {len(layers)} layers ok{also}.")
 
       # No actions/configure-pages step on purpose. It exists to hand a base
       # path to static site generators, and nothing here reads its outputs —

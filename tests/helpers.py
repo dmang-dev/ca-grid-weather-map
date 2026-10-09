@@ -22,6 +22,16 @@ if str(REPO) not in sys.path:
 
 import fetch_data as fd  # noqa: E402  (path setup must come first)
 
+# fetch_alerts and the FIRIS merge do their geometry in shapely, which
+# fetch_data.py imports lazily. tests.yml installs it; anywhere it is missing,
+# the tests that need it skip rather than fail.
+try:
+    import shapely  # noqa: F401
+    HAVE_SHAPELY = True
+except ImportError:
+    HAVE_SHAPELY = False
+needs_shapely = unittest.skipUnless(HAVE_SHAPELY, "shapely not installed")
+
 # ---------------------------------------------------------------------------
 # Canned upstream responses
 # ---------------------------------------------------------------------------
@@ -65,6 +75,13 @@ def polygon(ring, **props):
         "geometry": {"type": "Polygon", "coordinates": [ring]},
         "properties": props,
     }
+
+
+def square(lat, lon, half=0.02, **props):
+    """A square perimeter centred on (lat, lon), `half` degrees to each side."""
+    ring = [[lon - half, lat - half], [lon + half, lat - half], [lon + half, lat + half],
+            [lon - half, lat + half], [lon - half, lat - half]]
+    return polygon(ring, **props)
 
 
 class FakeResponse:
