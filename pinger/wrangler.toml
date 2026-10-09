@@ -13,6 +13,14 @@ workers_dev = false
 # deploy.
 preview_urls = false
 
+# Persist logs and invocation outcomes to Workers Logs (dashboard → Workers →
+# this Worker → Logs). Without it, console output existed only while someone
+# had `wrangler tail` attached — so when the token lapsed on 2026-09-06 there
+# was no record of 33 days of rejected dispatches to look back at. The free
+# plan keeps 3 days of logs; 48 ticks a day is nowhere near its quota.
+[observability]
+enabled = true
+
 # Every 30 minutes. The worker only dispatches when the published snapshot is
 # older than MAX_AGE_MINUTES, so a frequent check costs nothing and keeps the
 # worst-case staleness near the 2-hour target rather than GitHub's ~3.
