@@ -48,9 +48,12 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
 
 ## Conventions
 
-- **It's a PWA.** Service worker lives in `sw.js`. **Do not break
-  offline mode** — if you change the cached file list, smoke-test
-  offline in Lighthouse before pushing.
+- **It's a PWA.** Service worker lives in `sw.js`. It precaches the
+  shell, the unpkg libraries and every `data/` file the page loads, so
+  one visit is enough for an offline launch; `tests/test_sw_lists.py`
+  fails if those lists drift from `index.html`. Bump `CACHE_NAME` when a
+  shell file changes. **Do not break offline mode** — if you change the
+  cached file list, smoke-test offline in Lighthouse before pushing.
 - **Desktop vs mobile.** Project root = desktop/PWA. `mobile/` =
   Capacitor app-store wrapper that points at the hosted PWA.
 - **`data/` is regenerable and never committed.** Anything in there is
@@ -83,11 +86,24 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   station within 25 km beside the HRRR value, and the layer is **off by
   default** because 4,000 markers bury everything else. A gridded
   observed field would still mean RTMA and more GRIB processing.
+- **HRRR's U/V are grid-relative.** Its 10 m winds point along the
+  Lambert conformal grid (`uvRelativeToGrid=1`), and neither Herbie nor
+  cfgrib rotates them. Written straight out as eastward/northward, every
+  arrow over California leaned 10–17° clockwise and disagreed with the
+  RAWS station beside it. `_earth_relative_winds()` rotates on the native
+  grid before resampling, and raises (→ stale) rather than publish winds
+  whose orientation the GRIB attributes don't state.
 - **ArcGIS can truncate without saying so.** RAWS holds 4,208 records
   and returns exactly 2,000 with `exceededTransferLimit` *absent* —
   the flag only shows up on page 2. Anything that might exceed
   `maxRecordCount` must go through `arcgis_query_all()`, which pages
   with `resultOffset`. Don't trust the flag to warn you.
+- **RAWS empties and refills.** The upstream layer is periodically
+  reloaded, and a query caught mid-reload returns a few hundred stations
+  as a complete answer — no time filter is involved, so a short count is
+  never real weather. 12 of 100 deploys in Sept–Oct 2026 published
+  532–1,864 of ~4,200 stations as `ok`. `fetch_raws()` raises below
+  `RAWS_MIN_STATIONS` (3,000) so the last full file is served as stale.
 - **WFIGS perimeters lag; FIRIS doesn't.** WFIGS only has a polygon
   once someone ground-maps the fire and a GIS specialist uploads it — a
   day or more, worst on CAL FIRE state incidents. California's own
@@ -113,12 +129,23 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   "GANN" normalize together, and FIRIS's complex naming
   ("CINDERCOMPLEX-5-3") also answers to its sub-designation ("5-3"),
   which is what WFIGS calls it. That alias can be as short as `53`, so
-  **alias hits must be confirmed geometrically** (40 km) before they're
-  trusted — the primary key match doesn't need it, the alias does.
+  **alias hits must be confirmed geometrically** (`ALIAS_CONFIRM_KM`, 40
+  km from the perimeter's extent) before they're trusted — the primary
+  key match doesn't need it, the alias does. That covers every name match
+  that isn't a perimeter's own primary key, `_has_perimeter` included.
   FIRIS also re-uploads a fire as "<NAME>-UPDATED" now and then, which
   drew the same fire twice (RUMSEY vs RUMSEY-UPDATED, 0.01 km apart);
   `_FIRIS_REVISION_SUFFIX` folds that away before the latest-flight
   dedup. Only `-UPDATED` — a trailing *number* is a real sub-fire.
+- **Names alone still draw fires twice.** FIRIS calls WFIGS's "3-6
+  WAGON" just "WAGON", cross-wires Cinder's sub-fires ("5-3" carried
+  5-4's polygon), and flies an umbrella CINDER COMPLEX over both — 4 of 37
+  fires drawn twice on Aug 4 2026. `fetch_fires()` therefore also merges
+  a FIRIS perimeter sharing ≥ 50% of *each* polygon with one already
+  drawn, and drops one ≥ 90% covered by its sub-fires (`firis_merged`,
+  `firis_covered`). It stays conservative — a wrong merge hides a real
+  fire — and never treats a *fresher* flight inside an older perimeter
+  as covered: that's a new fire (a reburn), not the old one.
 - **Evacuation zones are Zonehaven, not a CAL FIRE original.** Genasys's
   product is Zonehaven; CAL FIRE republishes it (plus zones some counties
   publish themselves — one current record comes from Tuolumne County's
@@ -127,6 +154,17 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
   `est_population` and `structure_count` are null on every record —
   don't build on them. `last_updated` is unreliable: some timestamps
   land hours in the future, so the UI never prints an age for a zone.
+- **Red Flag Warnings live on fire weather zones.** Zone-based NWS
+  alerts come without a polygon; their shape is the zones they name. A
+  bare UGC code doesn't say which kind of zone it is, and
+  `/zones/forecast/CAZ270` 404s for a fire zone — that silently dropped 3
+  of 5 matched alerts in Oct 2026 while the layer said `ok`. Take shapes
+  from `affectedZones` (full URLs, type included; only api.weather.gov
+  ones are fetched). An alert still left without geometry counts as
+  `dropped_no_geometry` and adds to the manifest entry's `warnings` list,
+  which the deploy step prints. Expired alerts are filtered in the page,
+  not the fetcher: deploys are hours apart, and an end time passes
+  whether or not one runs.
 - **A fire can still have no polygon anywhere.** Until the first IR
   flight, a fire exists only as a point. `fetch_fire_points()` covers
   that; `_has_perimeter: false` marks the ones no perimeter layer can
@@ -144,14 +182,30 @@ pinger/                 Cloudflare Worker — rebuilds when GH's cron misses
 - Three CA utilities (LADWP, IID, PacifiCorp) don't publish to OES;
   their outage events will never appear no matter how robust the
   fetcher is.
-- **GitHub's `schedule` trigger is best-effort, and it shows.** Over one
-  39-hour sample `deploy-pages.yml` got 13 runs against an expected 20,
-  averaging ~3 h apart instead of 2, with a 6.25 h gap. Don't treat the
-  cron as a cadence guarantee — `pinger/` (a Cloudflare Worker) watches
-  the published manifest and dispatches a rebuild when it goes stale.
-  The workflow cron stays armed as a backstop; the worker checks the
-  manifest age first so the two schedulers don't queue duplicate deploys.
-  The UI's stale threshold (4.5 h) is set to tolerate one missed tick.
+- **GitHub's `schedule` trigger is best-effort, and it shows.** Since
+  late Aug 2026 it has fired only ~30–40% of `deploy-pages.yml`'s
+  2-hourly ticks: gaps average 5–7 h and reach 9 h. Don't treat the cron
+  as a cadence guarantee — `pinger/` (a Cloudflare Worker) watches the
+  published manifest and dispatches a rebuild when it goes stale; while
+  it worked, data never passed the UI's 4.5 h stale threshold. The
+  workflow cron stays armed as a backstop; the worker checks the manifest
+  age first so the two schedulers don't queue duplicate deploys.
+- **The pinger runs on a token that expires.** Its first PAT took
+  GitHub's default 30-day expiry and lapsed on 2026-09-06. Failures were
+  only `console.log`ged, so it dispatched nothing for 33 days and nobody
+  noticed. It now checks the token every tick, warns 7 days ahead, and
+  throws on failure (Workers Logs record it). The telltale from GitHub's
+  side: no `workflow_dispatch` runs of `deploy-pages.yml` for hours while
+  the snapshot is over 2 h old. Also, GitHub disables a public repo's
+  scheduled workflows after 60 days without a commit, and a disabled
+  workflow refuses dispatches too.
+- **eckitlib 2.3 crashes Python at exit on Linux.** It bundles its own
+  PROJ, findlibs loads it `RTLD_GLOBAL`, and a pyproj imported after
+  eccodes binds to it: `free(): invalid pointer`, exit 134, after all
+  the work is done. It kept the canary's ubuntu leg red Sep 21–Oct 5
+  2026; the deploy survived only on import order. `requirements.txt`
+  pins `eckitlib<2.3` on Linux — lift it once `python -c "import eccodes,
+  pyproj"` exits 0 on a fresh install.
 - **A bad basemap key doesn't error.** CARTO started requiring a key for
   raster basemaps in Sept 2026. Keyless requests return real tiles
   stamped "API KEY REQUIRED", and an invalid key returns the

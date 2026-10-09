@@ -12,13 +12,20 @@ python -m unittest discover -s tests -t tests -v       # per-test names
 python -m unittest discover -s tests -t tests -k gust  # one topic
 ```
 
-79 tests, well under a second. Every test stubs the network, so this runs
+140 tests, well under a second. Every test stubs the network, so this runs
 with no upstream access and gives the same answer offline.
 
 `fetch_data.py` only needs `numpy` and `requests` at import time — herbie,
 cfgrib and shapely are imported lazily inside the fetchers that use them — so
 the tests run without the heavy `eccodes` install. `.github/workflows/tests.yml`
 relies on that; the full install is covered by `cross-platform-check.yml`.
+The alert-zone and FIRIS-merge tests need `shapely` (`helpers.needs_shapely`):
+`tests.yml` installs it, and anywhere it is missing those 27 skip rather than
+fail. Because CI has shapely, `test_lazy_imports.py` blocks it (and herbie,
+cfgrib and friends) in a fresh interpreter and imports `fetch_data` there, so
+a module-scope import still fails the job. `test_wind.py` drives
+`fetch_wind()` through a fake Herbie module, so it needs neither herbie nor a
+GRIB file.
 
 ## The rule that matters
 
@@ -36,7 +43,13 @@ Anything new that can write goes through that base class.
 |---|---|
 | `test_arcgis_query.py` | Retry/backoff, in-body errors served as HTTP 200, and pagination |
 | `test_fire_naming.py` | Cross-source fire identity: keys, complex aliases, revision suffixes, IRWIN ids, geometry |
-| `test_fetchers.py` | Mirror failover, gust QC, and the empty/duplicate-result guards |
+| `test_fetchers.py` | Mirror failover, gust QC, and the empty/duplicate/short-result guards |
+| `test_alerts.py` | Drawing NWS alerts from their `affectedZones`, counting the ones that can't be, and never fetching a URL off api.weather.gov |
+| `test_wind.py` | HRRR grid-relative U/V rotated to earth-relative, and a run time that carries its UTC offset |
+| `test_fire_points.py` | `_has_perimeter` name matches confirmed against the perimeter's extent, and the cold start with no perimeter file |
+| `test_firis_union.py` | FIRIS perimeters that duplicate a WFIGS fire under another name: alias, overlap, umbrella, the cases that must stay separate, and the names and draw order a merge leaves behind |
+| `test_lazy_imports.py` | `fetch_data` still imports with only numpy and requests installed |
+| `test_sw_lists.py` | `sw.js` precaches exactly the unpkg libraries and `data/` files `index.html` loads, so offline launch can't silently lose one |
 | `test_stale_fallback.py` | `run_one()`'s carry-forward, with and without a seeded snapshot |
 | `test_seed_data.py` | The deploy's seed step — that it can never fail a build or keep a broken file |
 
